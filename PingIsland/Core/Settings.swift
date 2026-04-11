@@ -429,7 +429,7 @@ final class AppSettingsStore: ObservableObject {
 
     @Published var maxPanelHeight: Double {
         didSet {
-            let clamped = min(max(maxPanelHeight, 480), 700)
+            let clamped = min(max(maxPanelHeight, 240), 700)
             if maxPanelHeight != clamped {
                 maxPanelHeight = clamped
                 return
@@ -547,7 +547,7 @@ final class AppSettingsStore: ObservableObject {
         let soundThemeModeRaw = defaults.string(forKey: Keys.soundThemeMode)
         let resolvedSoundThemeMode = SoundThemeMode(
             rawValue: soundThemeModeRaw ?? ""
-        ) ?? .island8Bit
+        ) ?? .builtIn
         let temporarilyMuteNotificationsUntilTimestamp =
             defaults.object(forKey: Keys.temporarilyMuteNotificationsUntil) as? Double
         let notchPetStyleRaw = defaults.string(forKey: Keys.notchPetStyle)

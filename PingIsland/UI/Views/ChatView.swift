@@ -514,7 +514,7 @@ struct ChatView: View {
                     onSubmit: { payload in
                         sessionMonitor.answerIntervention(sessionId: sessionId, answers: payload)
                     },
-                    secondaryActionTitle: session.isInTmux ? AppLocalization.string("打开终端") : nil,
+                    secondaryActionTitle: session.isInTmux ? AppLocalization.string("Go to Terminal") : nil,
                     onSecondaryAction: session.isInTmux ? { focusTerminal() } : nil
                 )
             } else {
@@ -537,7 +537,7 @@ struct ChatView: View {
                             focusTerminal()
                         }
                         label: {
-                            Text(appLocalized: "打开终端")
+                            Text(appLocalized: "Go to Terminal")
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .semibold))

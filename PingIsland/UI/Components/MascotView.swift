@@ -221,7 +221,7 @@ enum MascotKind: String, CaseIterable, Identifiable, Sendable {
         case .claude:
             return "桌前橘猫"
         case .codex:
-            return "终端云团"
+            return "Terminal Cloud"
         case .gemini:
             return "蓝色双子星灵"
         case .openclaw:

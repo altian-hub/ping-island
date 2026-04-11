@@ -311,7 +311,7 @@ struct SessionClientInfo: Codable, Equatable, Sendable {
             return nil
         }
 
-        return "\(ideTitle) 终端"
+        return "\(ideTitle) Terminal"
     }
 
     nonisolated var terminalSourceDisplayName: String? {

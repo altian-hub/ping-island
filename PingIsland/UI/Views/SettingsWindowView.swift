@@ -801,7 +801,7 @@ private struct SettingsPanelContentView: View {
 
                 SettingsToggleLine(
                     title: "智能抑制",
-                    subtitle: "当前正在看终端时，不自动弹出通知面板",
+                    subtitle: "Do not auto-open panel while terminal is in focus",
                     isOn: $settings.smartSuppression
                 )
                 SettingsLineDivider()
@@ -884,7 +884,7 @@ private struct SettingsPanelContentView: View {
                     title: "最大面板高度",
                     subtitle: "控制聊天面板和 hover 预览的最大展开高度",
                     value: $settings.maxPanelHeight,
-                    range: 480...700,
+                    range: 240...700,
                     step: 10,
                     format: { "\($0.formatted(.number.precision(.fractionLength(0)))) pt" }
                 )

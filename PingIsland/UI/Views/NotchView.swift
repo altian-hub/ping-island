@@ -314,6 +314,8 @@ struct NotchView: View {
                     .onTapGesture {
                         if viewModel.status != .opened {
                             viewModel.notchOpen(reason: .click)
+                        } else {
+                            viewModel.notchClose()
                         }
                     }
             }

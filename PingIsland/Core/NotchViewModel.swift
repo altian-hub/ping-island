@@ -301,12 +301,8 @@ class NotchViewModel: ObservableObject {
             if geometry.isPointOutsidePanel(location, size: openedSize) {
                 // The panel window already handles click-through replay for intercepted clicks.
                 notchClose()
-            } else if geometry.notchScreenRect.contains(location) {
-                // Clicking notch while opened - only close if NOT in chat mode
-                if !isInChatMode {
-                    notchClose()
-                }
             }
+            // Clicks inside the panel are handled by the SwiftUI onTapGesture
         case .closed, .popping:
             if isPointInHoverTrigger(location) {
                 notchOpen(reason: .click)

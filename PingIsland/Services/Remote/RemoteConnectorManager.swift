@@ -523,37 +523,93 @@ final class RemoteConnectorManager: ObservableObject {
         )
 
         for profile in remoteHookProfiles {
-            let remoteConfigPath = Self.remoteConfigurationPath(
-                relativePath: profile.configurationRelativePaths[0],
-                homeDirectory: probe.homeDirectory
-            )
-            let existingConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
-                target: endpoint.sshTarget,
-                remotePath: remoteConfigPath,
-                password: password
-            )
             let remoteCommand = HookInstaller.managedBridgeCommand(
                 source: profile.bridgeSource,
                 extraArguments: profile.bridgeExtraArguments,
                 launcherPath: "\(endpoint.remoteInstallRoot)/bin/ping-island-bridge",
                 socketPath: endpoint.remoteHookSocketPath
             )
-            let updatedData = HookInstaller.updatedConfigurationData(
-                existingData: existingConfig?.isEmpty == true ? nil : existingConfig,
-                profile: profile,
-                customCommand: remoteCommand,
-                installing: true,
-                removingCommandPrefixes: ["/Users/"]
-            )
-            logger.debug(
-                "Remote bootstrap preparing hook config endpoint=\(endpoint.id.uuidString, privacy: .public) profile=\(profile.id, privacy: .public) remotePath=\(remoteConfigPath, privacy: .public) hasExistingConfig=\(existingConfig?.isEmpty == false, privacy: .public) updatedConfigBytes=\(updatedData.count, privacy: .public)"
-            )
-            try await RemoteSSHCommandRunner.writeRemoteFile(
-                target: endpoint.sshTarget,
-                remotePath: remoteConfigPath,
-                contents: updatedData,
-                password: password
-            )
+            switch profile.installationKind {
+            case .jsonHooks:
+                let remoteConfigPath = Self.remoteConfigurationPath(
+                    relativePath: profile.configurationRelativePaths[0],
+                    homeDirectory: probe.homeDirectory
+                )
+                let existingConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
+                    target: endpoint.sshTarget,
+                    remotePath: remoteConfigPath,
+                    password: password
+                )
+                let updatedData = HookInstaller.updatedConfigurationData(
+                    existingData: existingConfig?.isEmpty == true ? nil : existingConfig,
+                    profile: profile,
+                    customCommand: remoteCommand,
+                    installing: true,
+                    removingCommandPrefixes: ["/Users/"]
+                )
+                logger.debug(
+                    "Remote bootstrap preparing hook config endpoint=\(endpoint.id.uuidString, privacy: .public) profile=\(profile.id, privacy: .public) remotePath=\(remoteConfigPath, privacy: .public) hasExistingConfig=\(existingConfig?.isEmpty == false, privacy: .public) updatedConfigBytes=\(updatedData.count, privacy: .public)"
+                )
+                try await RemoteSSHCommandRunner.writeRemoteFile(
+                    target: endpoint.sshTarget,
+                    remotePath: remoteConfigPath,
+                    contents: updatedData,
+                    password: password
+                )
+            case .hookDirectory:
+                let remoteDirectoryPath = Self.remoteConfigurationPath(
+                    relativePath: profile.configurationRelativePaths[0],
+                    homeDirectory: probe.homeDirectory
+                )
+                let remoteBridgeArguments = Self.remoteManagedBridgeArguments(
+                    for: profile,
+                    installRoot: endpoint.remoteInstallRoot
+                )
+                let remoteFiles = HookInstaller.managedHookDirectoryFiles(
+                    for: profile,
+                    bridgeArguments: remoteBridgeArguments,
+                    bridgeEnvironment: Self.remoteManagedBridgeEnvironment(
+                        hookSocketPath: endpoint.remoteHookSocketPath
+                    )
+                )
+                logger.debug(
+                    "Remote bootstrap preparing hook directory endpoint=\(endpoint.id.uuidString, privacy: .public) profile=\(profile.id, privacy: .public) remotePath=\(remoteDirectoryPath, privacy: .public) fileCount=\(remoteFiles.count, privacy: .public)"
+                )
+                for (name, content) in remoteFiles {
+                    try await RemoteSSHCommandRunner.writeRemoteFile(
+                        target: endpoint.sshTarget,
+                        remotePath: "\(remoteDirectoryPath)/\(name)",
+                        contents: Data(content.utf8),
+                        password: password
+                    )
+                }
+
+                if let activationPath = profile.activationConfigurationRelativePath,
+                   let entryName = profile.activationEntryName {
+                    let remoteActivationPath = Self.remoteConfigurationPath(
+                        relativePath: activationPath,
+                        homeDirectory: probe.homeDirectory
+                    )
+                    let existingActivationConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
+                        target: endpoint.sshTarget,
+                        remotePath: remoteActivationPath,
+                        password: password
+                    )
+                    let updatedActivationData = HookInstaller.updatedInternalHookConfigurationData(
+                        existingData: existingActivationConfig?.isEmpty == true ? nil : existingActivationConfig,
+                        entryName: entryName,
+                        installing: true
+                    )
+                    try await RemoteSSHCommandRunner.writeRemoteFile(
+                        target: endpoint.sshTarget,
+                        remotePath: remoteActivationPath,
+                        contents: updatedActivationData,
+                        password: password
+                    )
+                }
+            case .pluginFile:
+                continue
+            }
         }
         logger.notice(
             "Remote bootstrap completed endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public)"
@@ -833,12 +889,28 @@ final class RemoteConnectorManager: ObservableObject {
         let supportedProfileIDs: Set<String> = [
             "claude-hooks",
             "codex-hooks",
+            "openclaw-hooks",
             "qoder-hooks",
             "qoderwork-hooks"
         ]
         return ClientProfileRegistry.managedHookProfiles.filter { profile in
-            supportedProfileIDs.contains(profile.id) && profile.installationKind == .jsonHooks
+            supportedProfileIDs.contains(profile.id)
         }
+    }
+
+    nonisolated static func remoteManagedBridgeArguments(
+        for profile: ManagedHookClientProfile,
+        installRoot: String
+    ) -> [String] {
+        [
+            "\(installRoot)/bin/ping-island-bridge",
+            "--source",
+            profile.bridgeSource
+        ] + profile.bridgeExtraArguments
+    }
+
+    nonisolated static func remoteManagedBridgeEnvironment(hookSocketPath: String) -> [String: String] {
+        ["ISLAND_SOCKET_PATH": hookSocketPath]
     }
 
     nonisolated static func remoteManagedHookConfigDirectoryPaths(
@@ -846,10 +918,39 @@ final class RemoteConnectorManager: ObservableObject {
         profiles: [ManagedHookClientProfile]
     ) -> [String] {
         profiles
-            .map { remoteConfigurationPath(relativePath: $0.configurationRelativePaths[0], homeDirectory: homeDirectory) }
-            .map { NSString(string: $0).deletingLastPathComponent }
+            .flatMap { profile in
+                remoteManagedHookDirectoryPaths(for: profile, homeDirectory: homeDirectory)
+            }
             .filter { !$0.isEmpty }
             .uniquedPreservingOrder()
+    }
+
+    nonisolated static func remoteManagedHookDirectoryPaths(
+        for profile: ManagedHookClientProfile,
+        homeDirectory: String
+    ) -> [String] {
+        let configurationPath = remoteConfigurationPath(
+            relativePath: profile.configurationRelativePaths[0],
+            homeDirectory: homeDirectory
+        )
+
+        var paths: [String]
+        switch profile.installationKind {
+        case .hookDirectory:
+            paths = [configurationPath, NSString(string: configurationPath).deletingLastPathComponent]
+        case .jsonHooks, .pluginFile:
+            paths = [NSString(string: configurationPath).deletingLastPathComponent]
+        }
+
+        if let activationRelativePath = profile.activationConfigurationRelativePath {
+            let activationPath = remoteConfigurationPath(
+                relativePath: activationRelativePath,
+                homeDirectory: homeDirectory
+            )
+            paths.append(NSString(string: activationPath).deletingLastPathComponent)
+        }
+
+        return paths.uniquedPreservingOrder()
     }
 
     nonisolated static func remoteConfigurationPath(relativePath: String, homeDirectory: String) -> String {

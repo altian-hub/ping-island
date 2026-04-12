@@ -33,6 +33,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
         XCTAssertEqual(profileIDs, [
             "claude-hooks",
             "codex-hooks",
+            "openclaw-hooks",
             "qoder-hooks",
             "qoderwork-hooks",
         ])
@@ -46,6 +47,9 @@ final class RemoteHookConfigurationTests: XCTestCase {
 
         XCTAssertTrue(directories.contains("/root/.claude"))
         XCTAssertTrue(directories.contains("/root/.codex"))
+        XCTAssertTrue(directories.contains("/root/.openclaw"))
+        XCTAssertTrue(directories.contains("/root/.openclaw/hooks"))
+        XCTAssertTrue(directories.contains("/root/.openclaw/hooks/ping-island-openclaw"))
         XCTAssertTrue(directories.contains("/root/.qoder"))
         XCTAssertTrue(directories.contains("/root/.qoderwork"))
     }
@@ -357,6 +361,29 @@ final class RemoteHookConfigurationTests: XCTestCase {
                 existingData: data,
                 entryName: "ping-island-openclaw"
             )
+        )
+    }
+
+    func testOpenClawRemoteBridgeArgumentsAndEnvironmentUseRemoteInstallRootAndSocket() throws {
+        let profile = try XCTUnwrap(ClientProfileRegistry.managedHookProfile(id: "openclaw-hooks"))
+        let arguments = RemoteConnectorManager.remoteManagedBridgeArguments(
+            for: profile,
+            installRoot: "/root/.ping-island"
+        )
+        let environment = RemoteConnectorManager.remoteManagedBridgeEnvironment(
+            hookSocketPath: "/root/.ping-island/run/agent-hook.sock"
+        )
+
+        XCTAssertEqual(arguments.prefix(3), [
+            "/root/.ping-island/bin/ping-island-bridge",
+            "--source",
+            "claude",
+        ])
+        XCTAssertTrue(arguments.contains("--client-kind"))
+        XCTAssertTrue(arguments.contains("openclaw"))
+        XCTAssertEqual(
+            environment,
+            ["ISLAND_SOCKET_PATH": "/root/.ping-island/run/agent-hook.sock"]
         )
     }
 }

@@ -447,6 +447,7 @@ struct InstanceRow: View {
     }
 
     private var rowBorderColor: Color {
+        let base = phaseBorderColor
         if isExpanded {
             if session.needsQuestionResponse {
                 return TerminalColors.blue.opacity(0.28)
@@ -454,6 +455,7 @@ struct InstanceRow: View {
             if isWaitingForApproval {
                 return TerminalColors.amber.opacity(0.26)
             }
+            if let base { return base.opacity(isHovered ? 0.38 : 0.3) }
             return Color.white.opacity(isHovered ? 0.16 : 0.12)
         }
         if session.needsQuestionResponse {
@@ -462,7 +464,25 @@ struct InstanceRow: View {
         if isWaitingForApproval {
             return TerminalColors.amber.opacity(0.16)
         }
+        if let base { return base.opacity(isHovered ? 0.3 : 0.22) }
         return Color.white.opacity(isHovered ? 0.08 : 0.04)
+    }
+
+    /// Phase-based border tint: orange while busy, red on error, green when finished.
+    private var phaseBorderColor: Color? {
+        if !session.completedErrorToolIDs.isEmpty {
+            return TerminalColors.red
+        }
+        switch session.phase {
+        case .processing, .compacting:
+            return TerminalColors.amber
+        case .waitingForInput, .ended:
+            return TerminalColors.green
+        case .idle:
+            return session.chatItems.isEmpty ? nil : TerminalColors.green
+        default:
+            return nil
+        }
     }
 
     private var shouldShowExpandedDetails: Bool {

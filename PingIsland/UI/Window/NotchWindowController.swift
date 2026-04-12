@@ -118,10 +118,6 @@ class NotchWindowController: NSWindowController {
         switch viewModel.status {
         case .opened:
             window.ignoresMouseEvents = false
-            if viewModel.openReason != .notification {
-                NSApp.activate(ignoringOtherApps: false)
-                window.makeKey()
-            }
         case .closed, .popping:
             window.ignoresMouseEvents = true
         }

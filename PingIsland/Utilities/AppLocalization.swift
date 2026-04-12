@@ -8,11 +8,18 @@ enum AppLocalization {
     }
 
     static func string(_ key: String, locale: Locale) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            bundle: .main,
-            locale: locale
-        )
+        let bundle = bundle(for: locale)
+        return bundle.localizedString(forKey: key, value: nil, table: nil)
+    }
+
+    private static func bundle(for locale: Locale) -> Bundle {
+        let code = locale.language.languageCode?.identifier ?? "en"
+        let lprojName = code.hasPrefix("zh") ? "zh-Hans" : code
+        if let path = Bundle.main.path(forResource: lprojName, ofType: "lproj"),
+           let bundle = Bundle(path: path) {
+            return bundle
+        }
+        return .main
     }
 
     static func format(_ key: String, _ arguments: CVarArg...) -> String {
@@ -24,8 +31,8 @@ enum AppLocalization {
     }
 
     private static func format(_ key: String, arguments: [CVarArg], locale: Locale) -> String {
-        let format = string(key, locale: locale)
-        return String(format: format, locale: locale, arguments: arguments)
+        let formatString = string(key, locale: locale)
+        return String(format: formatString, locale: locale, arguments: arguments)
     }
 }
 
@@ -44,7 +51,8 @@ struct AppLocalizedRootView<Content: View>: View {
 }
 
 extension Text {
+    @MainActor
     init(appLocalized key: String) {
-        self.init(LocalizedStringKey(key))
+        self.init(verbatim: AppLocalization.string(key))
     }
 }

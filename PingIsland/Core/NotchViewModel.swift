@@ -99,9 +99,7 @@ class NotchViewModel: ObservableObject {
             let fallbackHeight: CGFloat = openReason == .hover ? 180 : 200
             let measuredHeight = openedMeasuredHeight ?? fallbackHeight
             return CGSize(
-                width: openReason == .hover
-                    ? min(screenRect.width - 64, 600)
-                    : min(screenRect.width * 0.4, 480),
+                width: min(screenRect.width - 64, 600),
                 height: min(maxAllowedHeight, max(closedHeight + 24, measuredHeight))
             )
         }
@@ -135,6 +133,8 @@ class NotchViewModel: ObservableObject {
     private let events: EventMonitors?
     private let fullscreenActivityProvider: @MainActor (CGRect) -> Bool
     private var hoverTimer: DispatchWorkItem?
+    private var idleTimer: DispatchWorkItem?
+    private let idleAutoCloseDelay: TimeInterval = 3.0
     // Keep hover previews feeling responsive without making incidental cursor
     // passes over the notch expand it too aggressively.
     private let defaultHoverActivationDelay: TimeInterval = 0.24
@@ -267,9 +267,16 @@ class NotchViewModel: ObservableObject {
         hoverTimer?.cancel()
         hoverTimer = nil
 
+        // Reset idle auto-close timer based on hover state
+        if newHovering {
+            cancelIdleTimer()
+        } else if status == .opened {
+            startIdleTimer()
+        }
+
         if !newHovering,
            status == .opened,
-           openReason == .hover,
+           openReason == .hover || openReason == .notification,
            !isSettingsPopoverPresented,
            AppSettings.autoCollapseOnLeave {
             notchClose()
@@ -303,7 +310,9 @@ class NotchViewModel: ObservableObject {
                 notchClose()
             }
             // Clicks inside the panel are handled by the SwiftUI onTapGesture
-        case .closed, .popping:
+        case .popping:
+            break
+        case .closed:
             if isPointInHoverTrigger(location) {
                 notchOpen(reason: .click)
             }
@@ -359,6 +368,7 @@ class NotchViewModel: ObservableObject {
 
         openReason = reason
         status = .opened
+        startIdleTimer()
         if case .instances = contentType {
             openedMeasuredHeight = nil
         }
@@ -391,6 +401,7 @@ class NotchViewModel: ObservableObject {
     }
 
     func notchClose() {
+        cancelIdleTimer()
         // Save chat session before closing if in chat mode
         if case .chat(let session) = contentType {
             currentChatSession = session
@@ -398,6 +409,24 @@ class NotchViewModel: ObservableObject {
         status = .closed
         contentType = .instances
         openedMeasuredHeight = nil
+    }
+
+    // MARK: - Idle Auto-Close
+
+    private func startIdleTimer() {
+        cancelIdleTimer()
+        guard !isSettingsPopoverPresented else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.status == .opened, !self.isHovering, !self.isSettingsPopoverPresented else { return }
+            self.notchClose()
+        }
+        idleTimer = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + idleAutoCloseDelay, execute: workItem)
+    }
+
+    private func cancelIdleTimer() {
+        idleTimer?.cancel()
+        idleTimer = nil
     }
 
     func notchPop() {

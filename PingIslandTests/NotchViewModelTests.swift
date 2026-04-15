@@ -47,6 +47,41 @@ final class NotchViewModelTests: XCTestCase {
         }
     }
 
+    func testClosedHeightUsesDetectedSystemNotchHeight() async {
+        await MainActor.run {
+            let viewModel = NotchViewModel(
+                deviceNotchRect: CGRect(x: 0, y: 0, width: 220, height: 38),
+                screenRect: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                windowHeight: 320,
+                hasPhysicalNotch: true,
+                enableEventMonitoring: false,
+                observeSystemEnvironment: false,
+                fullscreenActivityProvider: { _ in false }
+            )
+
+            XCTAssertEqual(viewModel.closedHeight, 38)
+            XCTAssertEqual(viewModel.closedSize, CGSize(width: 266, height: 38))
+        }
+    }
+
+    func testClosedWidthExpandsToCoverWiderDetectedSystemNotch() async {
+        await MainActor.run {
+            let viewModel = NotchViewModel(
+                deviceNotchRect: CGRect(x: 0, y: 0, width: 312, height: 38),
+                screenRect: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                windowHeight: 320,
+                hasPhysicalNotch: true,
+                enableEventMonitoring: false,
+                observeSystemEnvironment: false,
+                fullscreenActivityProvider: { _ in false }
+            )
+
+            XCTAssertEqual(viewModel.closedWidth, 312)
+            XCTAssertEqual(viewModel.closedSize, CGSize(width: 312, height: 38))
+        }
+    }
+
+
     @MainActor
     private func makeViewModel() -> NotchViewModel {
         NotchViewModel(

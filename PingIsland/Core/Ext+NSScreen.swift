@@ -8,26 +8,18 @@
 import AppKit
 
 extension NSScreen {
-    /// Returns the size of the notch on this screen (pixel-perfect using macOS APIs)
+    var notchMetrics: ScreenNotchMetrics {
+        ScreenNotchMetrics.detect(
+            screenFrame: frame,
+            safeAreaTop: safeAreaInsets.top,
+            auxiliaryTopLeftWidth: auxiliaryTopLeftArea?.width,
+            auxiliaryTopRightWidth: auxiliaryTopRightArea?.width
+        )
+    }
+
+    /// Returns the size of the notch on this screen using macOS safe-area APIs when available.
     var notchSize: CGSize {
-        guard safeAreaInsets.top > 0 else {
-            // Fallback for non-notch displays (matches typical MacBook notch)
-            return CGSize(width: 224, height: 38)
-        }
-
-        let notchHeight = safeAreaInsets.top
-        let fullWidth = frame.width
-        let leftPadding = auxiliaryTopLeftArea?.width ?? 0
-        let rightPadding = auxiliaryTopRightArea?.width ?? 0
-
-        guard leftPadding > 0, rightPadding > 0 else {
-            // Fallback if auxiliary areas unavailable
-            return CGSize(width: 180, height: notchHeight)
-        }
-
-        // +4 to match boring.notch's calculation for proper alignment
-        let notchWidth = fullWidth - leftPadding - rightPadding + 4
-        return CGSize(width: notchWidth, height: notchHeight)
+        notchMetrics.size
     }
 
     /// Whether this is the built-in display
@@ -48,6 +40,6 @@ extension NSScreen {
 
     /// Whether this screen has a physical notch (camera housing)
     var hasPhysicalNotch: Bool {
-        safeAreaInsets.top > 0
+        notchMetrics.hasPhysicalNotch
     }
 }

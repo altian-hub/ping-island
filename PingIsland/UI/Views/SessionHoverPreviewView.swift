@@ -84,6 +84,10 @@ private struct SessionHoverCompactRow: View {
     let onOpen: () -> Void
     @ObservedObject private var settings = AppSettings.shared
 
+    private var usesTitleOnlySubagentPresentation: Bool {
+        session.usesTitleOnlySubagentPresentation
+    }
+
     var body: some View {
         Group {
             if session.clientInfo.suppressesActivationNavigation {
@@ -103,7 +107,7 @@ private struct SessionHoverCompactRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if !session.shouldHideProjectContextInUI {
+                    if !usesTitleOnlySubagentPresentation && !session.shouldHideProjectContextInUI {
                         Text(session.projectName)
                             .font(.system(size: max(12, settings.contentFontSize), weight: .semibold))
                             .foregroundColor(.white.opacity(0.88))
@@ -113,18 +117,24 @@ private struct SessionHoverCompactRow: View {
                             .foregroundColor(.white.opacity(0.36))
                     }
 
-                    Text(session.displayTitle)
+                    Text(usesTitleOnlySubagentPresentation ? session.titleOnlySubagentDisplayTitle : session.displayTitle)
                         .font(.system(size: max(14, settings.contentFontSize + 2), weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(1)
                 }
 
-                HoverSessionPreviewLines(session: session, compact: true)
+                if !usesTitleOnlySubagentPresentation {
+                    HoverSessionPreviewLines(session: session, compact: true)
+                }
             }
 
             Spacer(minLength: 0)
 
-            HoverSessionBadges(session: session)
+            if usesTitleOnlySubagentPresentation {
+                HoverSubagentBadges(session: session)
+            } else {
+                HoverSessionBadges(session: session)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -418,6 +428,10 @@ private struct HoverSessionHeader: View {
     var showPath: Bool = false
     @ObservedObject private var settings = AppSettings.shared
 
+    private var usesCodexSubagentTitleOnlyPresentation: Bool {
+        session.usesTitleOnlySubagentPresentation
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: showPath ? 8 : 0) {
             HStack(alignment: .center, spacing: HoverSessionLayout.headerSpacing) {
@@ -425,7 +439,7 @@ private struct HoverSessionHeader: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        if !session.shouldHideProjectContextInUI {
+                        if !usesCodexSubagentTitleOnlyPresentation && !session.shouldHideProjectContextInUI {
                             Text(session.projectName)
                                 .font(.system(size: max(13, settings.contentFontSize), weight: .semibold))
                                 .foregroundColor(.white.opacity(0.88))
@@ -435,19 +449,24 @@ private struct HoverSessionHeader: View {
                                 .foregroundColor(.white.opacity(0.42))
                         }
 
-                        Text(session.displayTitle)
+                        Text(usesCodexSubagentTitleOnlyPresentation ? session.titleOnlySubagentDisplayTitle : session.displayTitle)
                             .font(.system(size: max(15, settings.contentFontSize + 3), weight: .bold))
                             .foregroundColor(.white)
                             .lineLimit(1)
                     }
 
-                    HoverSessionBadges(session: session)
+                    if usesCodexSubagentTitleOnlyPresentation {
+                        HoverSubagentBadges(session: session)
+                    } else {
+                        HoverSessionBadges(session: session)
+                    }
                 }
 
                 Spacer(minLength: 0)
             }
 
             if showPath,
+               !usesCodexSubagentTitleOnlyPresentation,
                !session.shouldHideProjectContextInUI,
                !session.cwd.isEmpty,
                session.cwd != "/" {
@@ -466,7 +485,7 @@ private struct HoverSessionPreviewLines: View {
     @ObservedObject private var settings = AppSettings.shared
 
     private var lines: [HoverPreviewLine] {
-        if session.shouldUseMinimalCompactPresentation {
+        if session.shouldUseMinimalCompactPresentation || session.usesTitleOnlySubagentPresentation {
             return []
         }
         return HoverPreviewLineBuilder.previewLines(
@@ -516,6 +535,14 @@ private struct HoverSessionBadges: View {
                 tint: HoverPreviewStyle.providerBadgeFill(for: session),
                 foreground: .white.opacity(0.95)
             )
+            if let codexSubagentBadgeText = session.codexSubagentBadgeText {
+                previewBadge(
+                    codexSubagentBadgeText,
+                    tint: .white.opacity(0.12),
+                    foreground: .white.opacity(0.92),
+                    fontDesign: .monospaced
+                )
+            }
             if session.isRemoteSession {
                 remoteSessionBadge()
             }
@@ -568,6 +595,51 @@ private struct HoverSessionBadges: View {
             )
             .clipShape(Circle())
             .help(AppLocalization.string("远程连接"))
+    }
+}
+
+private struct HoverSubagentBadges: View {
+    let session: SessionState
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let subagentClientTypeBadgeText = session.subagentClientTypeBadgeText {
+                previewBadge(
+                    subagentClientTypeBadgeText,
+                    tint: HoverPreviewStyle.providerBadgeFill(for: session),
+                    foreground: .white.opacity(0.95)
+                )
+            }
+
+            if let codexSubagentBadgeText = session.codexSubagentBadgeText {
+                previewBadge(
+                    codexSubagentBadgeText,
+                    tint: .white.opacity(0.12),
+                    foreground: .white.opacity(0.92),
+                    fontDesign: .monospaced
+                )
+            }
+        }
+    }
+
+    private func previewBadge(
+        _ text: String,
+        tint: Color,
+        foreground: Color = .white.opacity(0.92),
+        fontDesign: Font.Design = .default
+    ) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold, design: fontDesign))
+            .monospacedDigit()
+            .foregroundColor(foreground)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(tint)
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.white.opacity(0.04), lineWidth: 1)
+            )
+            .clipShape(Capsule())
     }
 }
 
@@ -743,28 +815,28 @@ private enum HoverPreviewLineBuilder {
         for item in session.chatItems.reversed() {
             switch item.type {
             case .assistant(let text):
-                return sanitized(text)
+                return session.codexSubagentSummaryText(for: sanitized(text))
             case .thinking(let text):
-                return detailsEnabled ? sanitized(text) : nil
+                return detailsEnabled ? session.codexSubagentSummaryText(for: sanitized(text)) : nil
             case .toolCall(let tool):
                 guard detailsEnabled else { continue }
                 let preview = sanitized(tool.inputPreview)
                 let label = MCPToolFormatter.formatToolName(tool.name)
-                return preview.map { "\(label) \($0)" } ?? label
+                return session.codexSubagentSummaryText(for: preview.map { "\(label) \($0)" } ?? label)
             case .interrupted, .user:
                 continue
             }
         }
 
         if let intervention = session.intervention {
-            return sanitized(intervention.summaryText)
+            return session.codexSubagentSummaryText(for: sanitized(intervention.summaryText))
         }
 
-        return sanitized(session.lastMessage)
+        return session.codexSubagentSummaryText(for: sanitized(session.lastMessage))
     }
 
     private static func fallbackPreview(for session: SessionState) -> String? {
-        sanitized(session.previewText) ?? sanitized(session.lastMessage)
+        session.codexSubagentSummaryText(for: sanitized(session.previewText) ?? sanitized(session.lastMessage))
     }
 
     private static func sanitized(_ text: String?) -> String? {
@@ -800,25 +872,27 @@ private enum HoverConversationSnapshotBuilder {
         for item in session.chatItems.reversed() {
             switch item.type {
             case .assistant(let text):
-                return sanitized(text)
+                return session.codexSubagentSummaryText(for: sanitized(text))
             case .thinking(let text):
-                return sanitized(text)
+                return session.codexSubagentSummaryText(for: sanitized(text))
             case .toolCall(let tool):
                 let preview = sanitized(tool.inputPreview)
                 let label = MCPToolFormatter.formatToolName(tool.name)
-                return preview.map { "\(label) \($0)" } ?? label
+                return session.codexSubagentSummaryText(for: preview.map { "\(label) \($0)" } ?? label)
             case .interrupted:
-                return AppLocalization.string("已中断")
+                return session.codexSubagentSummaryText(for: AppLocalization.string("已中断"))
             case .user:
                 continue
             }
         }
 
         if let intervention = session.intervention {
-            return sanitized(intervention.summaryText)
+            return session.codexSubagentSummaryText(for: sanitized(intervention.summaryText))
         }
 
-        return sanitized(session.previewText) ?? sanitized(session.lastMessage)
+        return session.codexSubagentSummaryText(
+            for: sanitized(session.previewText) ?? sanitized(session.lastMessage)
+        )
     }
 
     private static func sanitized(_ text: String?) -> String? {

@@ -66,6 +66,38 @@ final class SessionStateTests: XCTestCase {
         XCTAssertEqual(withFirstUserMessage.displayTitle, "Fix the menu bar bug")
     }
 
+    func testHeuristicSubagentDisplayTitleUsesTitleOnlyPresentation() {
+        let session = SessionState(
+            sessionId: "qoder-heuristic-subagent",
+            cwd: "/tmp/project",
+            provider: .claude,
+            clientInfo: SessionClientInfo(kind: .qoder, profileID: "qoder", name: "Qoder"),
+            heuristicSubagentDisplayTitle: "Agent · Read File README.md"
+        )
+
+        XCTAssertTrue(session.isHeuristicSubagentSession)
+        XCTAssertTrue(session.usesTitleOnlySubagentPresentation)
+        XCTAssertEqual(session.primarySubagentVisibilityLevel, 1)
+        XCTAssertEqual(session.titleOnlySubagentDisplayTitle, "Agent · Read File README.md")
+    }
+
+    func testQoderAgentPrefixedDisplayTitleUsesCodexStyleSubagentRendering() {
+        let session = SessionState(
+            sessionId: "qoder-agent-prefix",
+            cwd: "/tmp/project",
+            provider: .claude,
+            clientInfo: SessionClientInfo(kind: .qoder, profileID: "qoder", name: "Qoder"),
+            sessionName: "Agent · 读取 README 文件"
+        )
+
+        XCTAssertTrue(session.isQoderAgentPrefixedSubagent)
+        XCTAssertTrue(session.usesTitleOnlySubagentPresentation)
+        XCTAssertTrue(session.shouldUseCodexSubagentCompactPresentation)
+        XCTAssertEqual(session.codexSubagentBadgeText, "SUBAGENT")
+        XCTAssertEqual(session.primarySubagentVisibilityLevel, 1)
+        XCTAssertEqual(session.titleOnlySubagentDisplayTitle, "Agent · 读取 README 文件")
+    }
+
     func testActiveQueueSortActivityDatePrefersLiveActivityOverOlderTranscriptUserTimestamp() {
         let now = Date()
         let session = SessionState(
@@ -308,6 +340,40 @@ final class SessionStateTests: XCTestCase {
         XCTAssertEqual(session.scopedApprovalAction, .allowSession)
     }
 
+    func testCodexDepthOneChildSessionIsRecognizedAsSubagent() {
+        let session = SessionState(
+            sessionId: "codex-subagent-depth-one",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 1,
+            codexSubagentNickname: "Avicenna",
+            codexSubagentRole: "analyst"
+        )
+
+        XCTAssertEqual(session.codexSubagentLevel, 1)
+        XCTAssertTrue(session.isCodexSubagent)
+        XCTAssertEqual(session.codexSubagentBadgeText, "SUBAGENT")
+        XCTAssertEqual(session.subagentClientTypeBadgeText, "Codex")
+        XCTAssertEqual(session.codexSubagentLabel, "Subagent · analyst · Avicenna")
+    }
+
+    func testCodexSubagentUsesCompactPrimaryPresentation() {
+        let session = SessionState(
+            sessionId: "codex-subagent-compact",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 1,
+            codexSubagentNickname: "Avicenna",
+            codexSubagentRole: "analyst",
+            lastActivity: Date()
+        )
+
+        XCTAssertTrue(session.shouldUseCodexSubagentCompactPresentation)
+        XCTAssertFalse(session.shouldUseMinimalCompactPresentation)
+    }
+
     func testIdleSessionAutoArchivesFromPrimaryUIAfterThirtyMinutes() {
         let session = SessionState(
             sessionId: "idle-auto-archive",
@@ -467,6 +533,143 @@ final class SessionStateTests: XCTestCase {
 
         XCTAssertFalse(firstRealSession.shouldHideAsDuplicateCodexPlaceholder(comparedTo: secondRealSession))
         XCTAssertFalse(secondRealSession.shouldHideAsDuplicateCodexPlaceholder(comparedTo: firstRealSession))
+    }
+
+    func testCodexDepthOneChildThreadUsesSubagentPresentation() {
+        let session = SessionState(
+            sessionId: "codex-subagent",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 1,
+            codexSubagentNickname: "Kierkegaard",
+            codexSubagentRole: "explorer"
+        )
+
+        XCTAssertEqual(session.codexSubagentLevel, 1)
+        XCTAssertTrue(session.isCodexSubagent)
+        XCTAssertEqual(session.codexSubagentBadgeText, "SUBAGENT")
+        XCTAssertEqual(session.codexSubagentLabel, "Subagent · explorer · Kierkegaard")
+        XCTAssertEqual(
+            session.codexSubagentSummaryText(for: "I checked the repo"),
+            "Subagent · explorer · Kierkegaard · I checked the repo"
+        )
+    }
+
+    func testCodexSubagentLabelIncludesRoleAndNickname() {
+        let session = SessionState(
+            sessionId: "codex-subagent",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 2,
+            codexSubagentNickname: "Kierkegaard",
+            codexSubagentRole: "explorer"
+        )
+
+        XCTAssertEqual(session.codexSubagentLevel, 2)
+        XCTAssertTrue(session.isCodexSubagent)
+        XCTAssertEqual(session.codexSubagentBadgeText, "SUBAGENT")
+        XCTAssertEqual(session.codexSubagentLabel, "Subagent · explorer · Kierkegaard")
+        XCTAssertEqual(session.codexSubagentListTitle, "Subagent · explorer · Kierkegaard")
+        XCTAssertEqual(
+            session.codexSubagentSummaryText(for: "I checked the repo"),
+            "Subagent · explorer · Kierkegaard · I checked the repo"
+        )
+    }
+
+    func testCodexCLISubagentKeepsCodexClientTypeBadge() {
+        let session = SessionState(
+            sessionId: "codex-cli-subagent",
+            cwd: "/tmp/project",
+            provider: .codex,
+            clientInfo: SessionClientInfo(
+                kind: .codexCLI,
+                profileID: "codex-cli",
+                name: "Codex CLI",
+                originator: "iTerm2",
+                terminalBundleIdentifier: "com.googlecode.iterm2",
+                terminalProgram: "iTerm.app"
+            ),
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 1
+        )
+
+        XCTAssertEqual(session.clientDisplayName, "iTerm2")
+        XCTAssertEqual(session.subagentClientTypeBadgeText, "Codex")
+    }
+
+    func testLinkedQoderChildUsesQoderClientTypeBadge() {
+        let session = SessionState(
+            sessionId: "qoder-linked-subagent",
+            cwd: "/tmp/project",
+            provider: .claude,
+            clientInfo: SessionClientInfo(
+                kind: .qoder,
+                profileID: "qoder",
+                name: "Qoder"
+            ),
+            linkedParentSessionId: "qoder-parent",
+            linkedSubagentDisplayTitle: "Agent · 读取README文件"
+        )
+
+        XCTAssertTrue(session.usesTitleOnlySubagentPresentation)
+        XCTAssertEqual(session.subagentClientTypeBadgeText, "Qoder")
+    }
+
+    func testSubagentVisibilityModeShowsAllChildrenWhenEnabled() {
+        let parent = SessionState(
+            sessionId: "codex-parent",
+            cwd: "/tmp/project",
+            provider: .codex
+        )
+        let parentAgent = SessionState(
+            sessionId: "codex-parent-agent",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent",
+            codexSubagentDepth: 1,
+            codexSubagentNickname: "Kierkegaard",
+            codexSubagentRole: "explorer"
+        )
+        let firstLevelChild = SessionState(
+            sessionId: "codex-child-1",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-parent-agent",
+            codexSubagentDepth: 2,
+            codexSubagentNickname: "Ampere",
+            codexSubagentRole: "explorer"
+        )
+        let nestedChild = SessionState(
+            sessionId: "codex-child-2",
+            cwd: "/tmp/project",
+            provider: .codex,
+            codexParentThreadId: "codex-child-1",
+            codexSubagentDepth: 3,
+            codexSubagentNickname: "Turing",
+            codexSubagentRole: "explorer"
+        )
+
+        XCTAssertTrue(parent.shouldDisplaySubagent(in: .hidden))
+        XCTAssertTrue(parentAgent.shouldDisplaySubagent(in: .hidden))
+        XCTAssertFalse(firstLevelChild.shouldDisplaySubagent(in: .hidden))
+        XCTAssertTrue(firstLevelChild.shouldDisplaySubagent(in: .visible))
+        XCTAssertTrue(nestedChild.shouldDisplaySubagent(in: .visible))
+    }
+
+    func testSubagentVisibilityModeAppliesToLinkedChildSessions() {
+        let qoderChild = SessionState(
+            sessionId: "qoder-child",
+            cwd: "/tmp/project",
+            provider: .claude,
+            clientInfo: SessionClientInfo(kind: .qoder, profileID: "qoder", name: "Qoder"),
+            linkedParentSessionId: "qoder-parent",
+            linkedSubagentDisplayTitle: "Agent · 读取 README"
+        )
+
+        XCTAssertFalse(qoderChild.shouldDisplaySubagent(in: .hidden))
+        XCTAssertTrue(qoderChild.shouldDisplaySubagent(in: .visible))
     }
 
     func testOpenCodeChildPlaceholderHidesWhenRicherParentMatchesSameSurface() {
@@ -1125,6 +1328,290 @@ final class SessionStateTests: XCTestCase {
 
         XCTAssertEqual(messages.first?.textContent, "使用工具问我一个问题")
         XCTAssertEqual(messages.last?.textContent, "好的，我来问你。")
+    }
+
+    func testConversationParserReadsWorkBuddyHistoryIndexIncrementally() async throws {
+        let sessionId = "workbuddy-history-\(UUID().uuidString)"
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let historyDirectory = tempDirectory
+            .appendingPathComponent(sessionId, isDirectory: true)
+        let messagesDirectory = historyDirectory.appendingPathComponent("messages", isDirectory: true)
+        let indexURL = historyDirectory.appendingPathComponent("index.json")
+
+        try FileManager.default.createDirectory(at: messagesDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        func writeMessage(id: String, role: String, blocks: [[String: Any]]) throws {
+            let payload: [String: Any] = [
+                "id": id,
+                "role": role,
+                "message": String(
+                    data: try JSONSerialization.data(
+                        withJSONObject: [
+                            "role": role,
+                            "content": blocks
+                        ],
+                        options: [.sortedKeys]
+                    ),
+                    encoding: .utf8
+                ) ?? ""
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .prettyPrinted])
+            try data.write(to: messagesDirectory.appendingPathComponent("\(id).json"), options: .atomic)
+        }
+
+        func writeIndex(messageIDs: [(id: String, role: String)], requests: [[String: Any]]) throws {
+            let payload: [String: Any] = [
+                "messages": messageIDs.map { ["id": $0.id, "role": $0.role, "type": "text", "isComplete": true] },
+                "requests": requests
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .prettyPrinted])
+            try data.write(to: indexURL, options: .atomic)
+        }
+
+        try writeMessage(
+            id: "user-1",
+            role: "user",
+            blocks: [["type": "text", "text": "先记住我的偏好"]]
+        )
+        try writeMessage(
+            id: "assistant-1",
+            role: "assistant",
+            blocks: [["type": "text", "text": "好的，我先记录下来。"]]
+        )
+        try writeIndex(
+            messageIDs: [("user-1", "user"), ("assistant-1", "assistant")],
+            requests: [[
+                "id": "request-1",
+                "messages": ["user-1", "assistant-1"],
+                "startedAt": 1_776_006_000_000 as Int
+            ]]
+        )
+
+        await ConversationParser.shared.resetState(for: sessionId)
+        let initialMessages = await ConversationParser.shared.parseFullConversation(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+        XCTAssertEqual(initialMessages.map(\.id), ["user-1", "assistant-1"])
+        XCTAssertEqual(initialMessages.last?.textContent, "好的，我先记录下来。")
+
+        try writeMessage(
+            id: "assistant-2",
+            role: "assistant",
+            blocks: [["type": "text", "text": "搞定 ✅"]]
+        )
+        try writeIndex(
+            messageIDs: [("user-1", "user"), ("assistant-1", "assistant"), ("assistant-2", "assistant")],
+            requests: [
+                [
+                    "id": "request-1",
+                    "messages": ["user-1", "assistant-1"],
+                    "startedAt": 1_776_006_000_000 as Int
+                ],
+                [
+                    "id": "request-2",
+                    "messages": ["assistant-2"],
+                    "startedAt": 1_776_006_060_000 as Int
+                ]
+            ]
+        )
+
+        let incremental = await ConversationParser.shared.parseIncremental(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+        XCTAssertEqual(incremental.newMessages.map(\.id), ["assistant-2"])
+        XCTAssertEqual(incremental.newMessages.first?.textContent, "搞定 ✅")
+
+        let info = await ConversationParser.shared.parse(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+        XCTAssertEqual(info.firstUserMessage, "先记住我的偏好")
+        XCTAssertEqual(info.lastMessage, "搞定 ✅")
+        XCTAssertEqual(info.lastMessageRole, "assistant")
+    }
+
+    func testConversationParserCodeBuddyHistoryKeepsOnlyUserQueryText() async throws {
+        let sessionId = "workbuddy-query-\(UUID().uuidString)"
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let historyDirectory = tempDirectory
+            .appendingPathComponent(sessionId, isDirectory: true)
+        let messagesDirectory = historyDirectory.appendingPathComponent("messages", isDirectory: true)
+        let indexURL = historyDirectory.appendingPathComponent("index.json")
+
+        try FileManager.default.createDirectory(at: messagesDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let wrappedUserMessage = """
+        <user_info> OS Version: darwin Shell: Zsh Workspace Folder: /Users/ping-island/WorkBuddy/20260412230308 </user_info>
+        <artifact_directory_path> Artifact Directory Path: /Users/ping-island/Library/Application Support/WorkBuddy/User/globalStorage/tencent-cloud.coding-copilot/brain/example </artifact_directory_path>
+        <project_context> <project_layout> /Users/ping-island/WorkBuddy/20260412230308/ </project_layout> </project_context>
+        <additional_data> current_time: Sunday, April 12, 2026，23:31 </additional_data>
+        <system_reminder> <working_memory_reminder> reminder </working_memory_reminder> </system_reminder>
+        <user_query> hi </user_query>
+        """
+
+        let userPayload: [String: Any] = [
+            "id": "user-1",
+            "role": "user",
+            "message": String(
+                data: try JSONSerialization.data(
+                    withJSONObject: [
+                        "role": "user",
+                        "content": wrappedUserMessage
+                    ],
+                    options: [.sortedKeys]
+                ),
+                encoding: .utf8
+            ) ?? ""
+        ]
+        let assistantPayload: [String: Any] = [
+            "id": "assistant-1",
+            "role": "assistant",
+            "message": String(
+                data: try JSONSerialization.data(
+                    withJSONObject: [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello there"]
+                        ]
+                    ],
+                    options: [.sortedKeys]
+                ),
+                encoding: .utf8
+            ) ?? ""
+        ]
+        try JSONSerialization.data(withJSONObject: userPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: messagesDirectory.appendingPathComponent("user-1.json"), options: .atomic)
+        try JSONSerialization.data(withJSONObject: assistantPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: messagesDirectory.appendingPathComponent("assistant-1.json"), options: .atomic)
+
+        let indexPayload: [String: Any] = [
+            "messages": [
+                ["id": "user-1", "role": "user", "type": "text", "isComplete": true],
+                ["id": "assistant-1", "role": "assistant", "type": "text", "isComplete": true]
+            ],
+            "requests": [[
+                "id": "request-1",
+                "messages": ["user-1", "assistant-1"],
+                "startedAt": 1_776_006_100_000 as Int
+            ]]
+        ]
+        try JSONSerialization.data(withJSONObject: indexPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: indexURL, options: .atomic)
+
+        await ConversationParser.shared.resetState(for: sessionId)
+        let messages = await ConversationParser.shared.parseFullConversation(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+        let info = await ConversationParser.shared.parse(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+
+        XCTAssertEqual(messages.first?.textContent, "hi")
+        XCTAssertEqual(info.firstUserMessage, "hi")
+        XCTAssertEqual(info.lastMessage, "Hello there")
+    }
+
+    func testConversationParserCodeBuddyHistoryFormatsQuestionAnswerPayload() async throws {
+        let sessionId = "workbuddy-question-answer-\(UUID().uuidString)"
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let historyDirectory = tempDirectory
+            .appendingPathComponent(sessionId, isDirectory: true)
+        let messagesDirectory = historyDirectory.appendingPathComponent("messages", isDirectory: true)
+        let indexURL = historyDirectory.appendingPathComponent("index.json")
+
+        try FileManager.default.createDirectory(at: messagesDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let wrappedUserMessage = """
+        <user_query>
+        <question_answer>
+        <questions>
+        <question_item id="q5">
+        <question>你对项目有什么具体想法或需求？（可选）</question>
+        <answers>
+        还没想好，需要你推荐
+        </answers>
+        </question_item>
+        </questions>
+        </question_answer>
+        </user_query>
+        """
+
+        let userPayload: [String: Any] = [
+            "id": "user-1",
+            "role": "user",
+            "message": String(
+                data: try JSONSerialization.data(
+                    withJSONObject: [
+                        "role": "user",
+                        "content": wrappedUserMessage
+                    ],
+                    options: [.sortedKeys]
+                ),
+                encoding: .utf8
+            ) ?? ""
+        ]
+        let assistantPayload: [String: Any] = [
+            "id": "assistant-1",
+            "role": "assistant",
+            "message": String(
+                data: try JSONSerialization.data(
+                    withJSONObject: [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "收到，我来给你一些建议。"]
+                        ]
+                    ],
+                    options: [.sortedKeys]
+                ),
+                encoding: .utf8
+            ) ?? ""
+        ]
+
+        try JSONSerialization.data(withJSONObject: userPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: messagesDirectory.appendingPathComponent("user-1.json"), options: .atomic)
+        try JSONSerialization.data(withJSONObject: assistantPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: messagesDirectory.appendingPathComponent("assistant-1.json"), options: .atomic)
+
+        let indexPayload: [String: Any] = [
+            "messages": [
+                ["id": "user-1", "role": "user", "type": "text", "isComplete": true],
+                ["id": "assistant-1", "role": "assistant", "type": "text", "isComplete": true]
+            ],
+            "requests": [[
+                "id": "request-1",
+                "messages": ["user-1", "assistant-1"],
+                "startedAt": 1_776_006_100_000 as Int
+            ]]
+        ]
+        try JSONSerialization.data(withJSONObject: indexPayload, options: [.sortedKeys, .prettyPrinted])
+            .write(to: indexURL, options: .atomic)
+
+        await ConversationParser.shared.resetState(for: sessionId)
+        let messages = await ConversationParser.shared.parseFullConversation(
+            sessionId: sessionId,
+            cwd: tempDirectory.path,
+            explicitFilePath: indexURL.path
+        )
+
+        XCTAssertEqual(
+            messages.first?.textContent,
+            "问题：你对项目有什么具体想法或需求？（可选） 回答：还没想好，需要你推荐"
+        )
     }
 
     func testGhosttySelectionScriptPrefersStableTerminalIdentifier() {

@@ -407,6 +407,8 @@ actor DiagnosticsExporter {
                     "smartSuppression": AppSettings.smartSuppression,
                     "autoOpenCompletionPanel": AppSettings.autoOpenCompletionPanel,
                     "showAgentDetail": AppSettings.showAgentDetail,
+                    "subagentVisibilityMode": AppSettings.subagentVisibilityMode.rawValue,
+                    "codexSubagentVisibilityMode": AppSettings.subagentVisibilityMode.rawValue,
                     "showUsage": AppSettings.showUsage,
                     "usageValueMode": AppSettings.usageValueMode.rawValue,
                     "contentFontSize": AppSettings.contentFontSize,

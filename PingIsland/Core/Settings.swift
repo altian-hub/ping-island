@@ -112,6 +112,42 @@ enum NotchDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum SubagentVisibilityMode: String, CaseIterable, Identifiable {
+    case hidden
+    case visible
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .hidden:
+            return "不显示"
+        case .visible:
+            return "显示"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .hidden:
+            return "主列表里隐藏所有子 Agent 消息项"
+        case .visible:
+            return "主列表里展示所有子 Agent 消息项"
+        }
+    }
+
+    init?(persistedValue: String) {
+        switch persistedValue {
+        case Self.hidden.rawValue:
+            self = .hidden
+        case Self.visible.rawValue, "firstLevelOnly", "all":
+            self = .visible
+        default:
+            return nil
+        }
+    }
+}
+
 enum NotchPetStyle: String, CaseIterable, Identifiable {
     case crab
     case slime
@@ -183,6 +219,7 @@ final class AppSettingsStore: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private var isBootstrapping = true
+    private var subagentVisibilityModeStorage: SubagentVisibilityMode = .visible
 
     // MARK: - Keys
 
@@ -211,6 +248,8 @@ final class AppSettingsStore: ObservableObject {
         static let smartSuppression = "smartSuppression"
         static let autoOpenCompletionPanel = "autoOpenCompletionPanel"
         static let showAgentDetail = "showAgentDetail"
+        static let subagentVisibilityMode = "subagentVisibilityMode"
+        static let legacyCodexSubagentVisibilityMode = "codexSubagentVisibilityMode"
         static let showUsage = "showUsage"
         static let usageValueMode = "usageValueMode"
         static let contentFontSize = "contentFontSize"
@@ -401,6 +440,18 @@ final class AppSettingsStore: ObservableObject {
         }
     }
 
+    var subagentVisibilityMode: SubagentVisibilityMode {
+        get { subagentVisibilityModeStorage }
+        set {
+            guard subagentVisibilityModeStorage != newValue else { return }
+            objectWillChange.send()
+            subagentVisibilityModeStorage = newValue
+            guard !isBootstrapping else { return }
+            defaults.set(newValue.rawValue, forKey: Keys.subagentVisibilityMode)
+            defaults.set(newValue.rawValue, forKey: Keys.legacyCodexSubagentVisibilityMode)
+        }
+    }
+
     @Published var showUsage: Bool {
         didSet {
             guard !isBootstrapping else { return }
@@ -548,6 +599,8 @@ final class AppSettingsStore: ObservableObject {
         let resolvedSoundThemeMode = SoundThemeMode(
             rawValue: soundThemeModeRaw ?? ""
         ) ?? .builtIn
+        let subagentVisibilityModeRaw = defaults.string(forKey: Keys.subagentVisibilityMode)
+            ?? defaults.string(forKey: Keys.legacyCodexSubagentVisibilityMode)
         let temporarilyMuteNotificationsUntilTimestamp =
             defaults.object(forKey: Keys.temporarilyMuteNotificationsUntil) as? Double
         let notchPetStyleRaw = defaults.string(forKey: Keys.notchPetStyle)
@@ -594,6 +647,12 @@ final class AppSettingsStore: ObservableObject {
         _smartSuppression = Published(initialValue: defaults.object(forKey: Keys.smartSuppression) as? Bool ?? true)
         _autoOpenCompletionPanel = Published(initialValue: defaults.object(forKey: Keys.autoOpenCompletionPanel) as? Bool ?? true)
         _showAgentDetail = Published(initialValue: defaults.object(forKey: Keys.showAgentDetail) as? Bool ?? true)
+        subagentVisibilityModeStorage = SubagentVisibilityMode(
+            persistedValue: subagentVisibilityModeRaw ?? ""
+        ) ?? .visible
+        if defaults.string(forKey: Keys.subagentVisibilityMode) == nil {
+            defaults.set(subagentVisibilityModeStorage.rawValue, forKey: Keys.subagentVisibilityMode)
+        }
         _showUsage = Published(initialValue: defaults.object(forKey: Keys.showUsage) as? Bool ?? false)
         _usageValueMode = Published(initialValue: UsageValueMode(rawValue: usageValueModeRaw ?? "") ?? .used)
         _contentFontSize = Published(initialValue: defaults.object(forKey: Keys.contentFontSize) as? Double ?? 13)
@@ -699,6 +758,11 @@ enum AppSettings {
     static var showAgentDetail: Bool {
         get { shared.showAgentDetail }
         set { shared.showAgentDetail = newValue }
+    }
+
+    static var subagentVisibilityMode: SubagentVisibilityMode {
+        get { shared.subagentVisibilityMode }
+        set { shared.subagentVisibilityMode = newValue }
     }
 
     static var showUsage: Bool {

@@ -214,7 +214,7 @@ struct SessionCompletionNotificationView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white.opacity(0.48))
 
-                    Text(userText ?? session.displayTitle)
+                    Text(userText ?? session.titleOnlySubagentDisplayTitle)
                         .font(.system(size: bodyFontSize, weight: .semibold))
                         .foregroundColor(.white.opacity(0.88))
                         .lineLimit(2)

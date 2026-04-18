@@ -15,7 +15,7 @@ final class JSONLInterruptWatcherTests: XCTestCase {
 
         let resolved = JSONLInterruptWatcher.resolveFallbackFilePath(
             sessionId: sessionId,
-            cwd: "/Users/wudanwu/github/CodeIsland"
+            cwd: "/Users/ping-island/github/CodeIsland"
         )
 
         XCTAssertEqual(resolved, rolloutURL.path)

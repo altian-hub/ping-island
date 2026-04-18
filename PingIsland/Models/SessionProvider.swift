@@ -182,6 +182,26 @@ struct SessionClientInfo: Codable, Equatable, Sendable {
         return profile?.displayName ?? provider.displayName
     }
 
+    nonisolated func subagentClientTypeLabel(for provider: SessionProvider) -> String {
+        if provider == .codex {
+            return provider.displayName
+        }
+
+        if let profile = resolvedProfile(for: provider) {
+            return profile.displayName
+        }
+
+        if let name {
+            return Self.normalizedBadgeLabel(name, provider: provider, kind: kind) ?? name
+        }
+
+        if let originator {
+            return Self.normalizedBadgeLabel(originator, provider: provider, kind: kind) ?? originator
+        }
+
+        return provider.displayName
+    }
+
     nonisolated func assistantLabel(for provider: SessionProvider) -> String {
         switch resolvedProfile(for: provider)?.assistantLabelMode {
         case .badgeLabel:

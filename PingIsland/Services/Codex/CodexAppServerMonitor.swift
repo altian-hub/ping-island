@@ -4,6 +4,13 @@ import os.log
 actor CodexAppServerMonitor {
     static let shared = CodexAppServerMonitor()
 
+    private struct ParsedSubagentMetadata {
+        let parentThreadId: String?
+        let depth: Int?
+        let nickname: String?
+        let role: String?
+    }
+
     struct ThreadDiagnosticsSnapshot: Codable, Sendable {
         let threadId: String
         let name: String?
@@ -769,6 +776,7 @@ actor CodexAppServerMonitor {
         var latestTurnId: String?
         var inferredIntervention: SessionIntervention?
         var itemOffset: TimeInterval = 0
+        let subagentMetadata = parseSubagentMetadata(from: thread)
 
         for (turnIndex, turn) in turns.enumerated() {
             if turnIndex == turns.count - 1 {
@@ -878,6 +886,10 @@ actor CodexAppServerMonitor {
             name: sanitizedText(thread["name"] as? String),
             preview: preview,
             cwd: (thread["cwd"] as? String) ?? "/",
+            parentThreadId: subagentMetadata?.parentThreadId,
+            subagentDepth: subagentMetadata?.depth,
+            subagentNickname: subagentMetadata?.nickname,
+            subagentRole: subagentMetadata?.role,
             clientInfo: snapshotClientInfo,
             intervention: inferredIntervention,
             createdAt: createdAt,
@@ -889,6 +901,49 @@ actor CodexAppServerMonitor {
             latestResponseText: latestFinalText ?? latestAgentText ?? preview,
             latestResponsePhase: latestFinalPhase ?? latestAgentPhase,
             latestUserText: latestUserText
+        )
+    }
+
+    private func parseSubagentMetadata(from thread: [String: Any]) -> ParsedSubagentMetadata? {
+        let topLevelNickname = sanitizedText(thread["agentNickname"] as? String)
+            ?? sanitizedText(thread["agent_nickname"] as? String)
+        let topLevelRole = sanitizedText(thread["agentRole"] as? String)
+            ?? sanitizedText(thread["agent_role"] as? String)
+        let topLevelParent = sanitizedText(thread["parentThreadId"] as? String)
+            ?? sanitizedText(thread["parent_thread_id"] as? String)
+            ?? sanitizedText(thread["forkedFromId"] as? String)
+            ?? sanitizedText(thread["forked_from_id"] as? String)
+        let topLevelDepth = intValue(thread["subagentDepth"]) ?? intValue(thread["depth"])
+
+        guard let source = thread["source"] as? [String: Any] else {
+            guard topLevelParent != nil || topLevelDepth != nil || topLevelNickname != nil || topLevelRole != nil else {
+                return nil
+            }
+            return ParsedSubagentMetadata(
+                parentThreadId: topLevelParent,
+                depth: topLevelDepth,
+                nickname: topLevelNickname,
+                role: topLevelRole
+            )
+        }
+
+        let subagent = source["subagent"] as? [String: Any]
+        let threadSpawn = subagent?["thread_spawn"] as? [String: Any]
+
+        let parentThreadId = sanitizedText(threadSpawn?["parent_thread_id"] as? String) ?? topLevelParent
+        let depth = intValue(threadSpawn?["depth"]) ?? topLevelDepth
+        let nickname = sanitizedText(threadSpawn?["agent_nickname"] as? String) ?? topLevelNickname
+        let role = sanitizedText(threadSpawn?["agent_role"] as? String) ?? topLevelRole
+
+        guard parentThreadId != nil || depth != nil || nickname != nil || role != nil else {
+            return nil
+        }
+
+        return ParsedSubagentMetadata(
+            parentThreadId: parentThreadId,
+            depth: depth,
+            nickname: nickname,
+            role: role
         )
     }
 
@@ -1208,6 +1263,19 @@ actor CodexAppServerMonitor {
             return number.stringValue
         }
         return String(describing: value)
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int {
+            return int
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string)
+        }
+        return nil
     }
 
     private func resolveCodexExecutable() -> String? {

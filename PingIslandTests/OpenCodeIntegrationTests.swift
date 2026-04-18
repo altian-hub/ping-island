@@ -73,7 +73,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
         )
         let event = HookEvent(
             sessionId: "openclaw-session",
-            cwd: "/Users/wudanwu/Island",
+            cwd: "/Users/ping-island/Island",
             event: "command:new",
             status: "processing",
             provider: .claude,
@@ -102,7 +102,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
         )
         let session = SessionState(
             sessionId: "openclaw-session",
-            cwd: "/Users/wudanwu/Island",
+            cwd: "/Users/ping-island/Island",
             projectName: "Island",
             provider: .claude,
             clientInfo: clientInfo,
@@ -123,7 +123,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
 
         let fileURL = root.appendingPathComponent("openclaw-session.jsonl")
         let content = """
-        {"type":"session","version":3,"id":"openclaw-session","timestamp":"2026-04-11T15:43:20.000Z","cwd":"/Users/wudanwu/.openclaw/workspace"}
+        {"type":"session","version":3,"id":"openclaw-session","timestamp":"2026-04-11T15:43:20.000Z","cwd":"/Users/ping-island/.openclaw/workspace"}
         {"type":"message","id":"u1","timestamp":"2026-04-11T15:43:24.648Z","message":{"role":"user","content":[{"type":"text","text":"Conversation info (untrusted metadata):\\n```json\\n{\\n  \\"message_id\\": \\"x\\"\\n}\\n```\\n\\nhi"}]}}
         {"type":"message","id":"a1","timestamp":"2026-04-11T15:43:29.628Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"Hello from OpenClaw"}]}}
         """.data(using: .utf8)
@@ -132,12 +132,12 @@ final class OpenCodeIntegrationTests: XCTestCase {
         await ConversationParser.shared.resetState(for: "openclaw-session")
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: "openclaw-session",
-            cwd: "/Users/wudanwu/Island",
+            cwd: "/Users/ping-island/Island",
             explicitFilePath: fileURL.path
         )
         let info = await ConversationParser.shared.parse(
             sessionId: "openclaw-session",
-            cwd: "/Users/wudanwu/Island",
+            cwd: "/Users/ping-island/Island",
             explicitFilePath: fileURL.path
         )
 
@@ -185,7 +185,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
         {
           "$schema": "https://opencode.ai/config.json",
           "plugin": [
-            "file:///Users/wudanwu/.config/opencode/plugins/open-island.js"
+            "file:///Users/ping-island/.config/opencode/plugins/open-island.js"
           ]
         }
         """.data(using: .utf8)
@@ -201,7 +201,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let plugins = try XCTUnwrap(object["plugin"] as? [String])
 
-        XCTAssertTrue(plugins.contains("file:///Users/wudanwu/.config/opencode/plugins/open-island.js"))
+        XCTAssertTrue(plugins.contains("file:///Users/ping-island/.config/opencode/plugins/open-island.js"))
         XCTAssertTrue(plugins.contains(profile.primaryConfigurationURL.absoluteURL.absoluteString))
         XCTAssertEqual(
             plugins.filter { $0 == profile.primaryConfigurationURL.absoluteURL.absoluteString }.count,
@@ -214,8 +214,8 @@ final class OpenCodeIntegrationTests: XCTestCase {
         {
           "$schema": "https://opencode.ai/config.json",
           "plugin": [
-            "file:///Users/wudanwu/.config/opencode/plugins/open-island.js",
-            "file:///Users/wudanwu/.config/opencode/plugins/ping-island.js"
+            "file:///Users/ping-island/.config/opencode/plugins/open-island.js",
+            "file:///Users/ping-island/.config/opencode/plugins/ping-island.js"
           ]
         }
         """.data(using: .utf8)
@@ -231,7 +231,7 @@ final class OpenCodeIntegrationTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let plugins = try XCTUnwrap(object["plugin"] as? [String])
 
-        XCTAssertTrue(plugins.contains("file:///Users/wudanwu/.config/opencode/plugins/open-island.js"))
+        XCTAssertTrue(plugins.contains("file:///Users/ping-island/.config/opencode/plugins/open-island.js"))
         XCTAssertFalse(plugins.contains(profile.primaryConfigurationURL.absoluteURL.absoluteString))
     }
 

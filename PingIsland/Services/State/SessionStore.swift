@@ -24,12 +24,19 @@ actor SessionStore {
         let cwd: String
         let projectName: String
         let displayTitle: String
+        let effectiveDisplayTitle: String
         let sessionName: String?
         let previewText: String?
         let lastMessage: String?
         let clientKind: String
         let clientName: String?
         let sessionFilePath: String?
+        let presentationMode: String
+        let usesTitleOnlySubagentPresentation: Bool
+        let linkedParentSessionId: String?
+        let linkedSubagentDisplayTitle: String?
+        let codexSubagentLevel: Int?
+        let codexSubagentLabel: String?
         let hasIntervention: Bool
         let chatItemCount: Int
         let lastActivity: Date
@@ -59,6 +66,7 @@ actor SessionStore {
     private let codexContinuationMergeWindow: TimeInterval = 10 * 60
     private let qoderConversationPollIntervalNs: UInt64 = 250_000_000
     private let qoderConversationPollTimeoutNs: UInt64 = 120_000_000_000
+    private let qoderSubagentAssociationWindow: TimeInterval = 2 * 60
     private let openClawConversationPollIntervalNs: UInt64 = 1_000_000_000
     private let openClawConversationPollTimeoutNs: UInt64 = 30_000_000_000
 
@@ -240,6 +248,7 @@ actor SessionStore {
         if event.status == "ended", !shouldPreserveEndedStopForAnsweredQuestion {
             markSessionEnded(&session)
             sessions[sessionId] = session
+            syncLinkedQoderChildSessions(for: session)
             publishState()
             cancelPendingCodexPlaceholderPrune(sessionId: sessionId)
             cancelPendingQoderConversationPoll(sessionId: sessionId)
@@ -313,7 +322,10 @@ actor SessionStore {
             session.subagentState = SubagentState()
         }
 
+        associateQoderChildSessionIfNeeded(sessionId: sessionId, event: event, session: &session)
+
         sessions[sessionId] = session
+        syncLinkedQoderChildSessions(for: session)
         publishState()
         updateCodexPlaceholderPrune(for: session)
         updateQoderConversationPoll(for: session, event: event)
@@ -576,6 +588,136 @@ actor SessionStore {
         session.subagentState.stopTask(taskToolId: taskToolId)
         sessions[sessionId] = session
         // Subagent tools will be populated from agent file in processFileUpdated
+    }
+
+    private func associateQoderChildSessionIfNeeded(
+        sessionId: String,
+        event: HookEvent,
+        session: inout SessionState
+    ) {
+        guard session.clientInfo.brand == .qoder else { return }
+        guard !session.usesTitleOnlySubagentPresentation else { return }
+        guard event.event != "Stop", event.event != "SessionEnd" else { return }
+        guard (event.tool?.caseInsensitiveCompare("Agent") ?? .orderedDescending) != .orderedSame else { return }
+        guard let parent = qoderParentCandidate(for: sessionId, cwd: session.cwd) else { return }
+
+        session.linkedParentSessionId = parent.sessionId
+        session.linkedSubagentDisplayTitle = qoderSubagentDisplayTitle(from: parent)
+            ?? session.linkedSubagentDisplayTitle
+
+        Self.logger.notice(
+            "Linked Qoder child session child=\(sessionId, privacy: .public) parent=\(parent.sessionId, privacy: .public)"
+        )
+    }
+
+    private func qoderParentCandidate(for childSessionId: String, cwd: String) -> SessionState? {
+        let referenceDate = Date()
+
+        return sessions.values
+            .compactMap { session -> (SessionState, Date)? in
+                guard session.sessionId != childSessionId else { return nil }
+                guard session.clientInfo.brand == .qoder else { return nil }
+                guard session.cwd == cwd else { return nil }
+                guard session.phase != .ended else { return nil }
+                guard !session.usesTitleOnlySubagentPresentation else { return nil }
+                guard let agentTimestamp = recentQoderAgentTimestamp(in: session) else { return nil }
+                guard referenceDate.timeIntervalSince(agentTimestamp) <= qoderSubagentAssociationWindow else {
+                    return nil
+                }
+                return (session, agentTimestamp)
+            }
+            .sorted { lhs, rhs in lhs.1 > rhs.1 }
+            .first?
+            .0
+    }
+
+    private func recentQoderAgentTimestamp(in session: SessionState) -> Date? {
+        for item in session.chatItems.reversed() {
+            guard case .toolCall(let tool) = item.type else { continue }
+            guard tool.name.caseInsensitiveCompare("Agent") == .orderedSame else { continue }
+            guard tool.status == .running || tool.status == .success else { continue }
+            return item.timestamp
+        }
+
+        return nil
+    }
+
+    private func qoderSubagentDisplayTitle(from parent: SessionState) -> String? {
+        for item in parent.chatItems.reversed() {
+            guard case .toolCall(let tool) = item.type else { continue }
+            guard tool.name.caseInsensitiveCompare("Agent") == .orderedSame else { continue }
+
+            let description = tool.input["description"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let description, !description.isEmpty {
+                return "Agent · \(description)"
+            }
+
+            return "Agent"
+        }
+
+        return nil
+    }
+
+    private func refreshQoderFallbackSubagentPresentation(
+        for sessionId: String,
+        session: inout SessionState
+    ) async {
+        guard session.clientInfo.brand == .qoder else { return }
+
+        if session.isLinkedSubagentSession {
+            session.heuristicSubagentDisplayTitle = nil
+            return
+        }
+
+        let fallbackPresentation = await ConversationParser.shared.qoderFallbackSubagentPresentation(
+            sessionId: sessionId,
+            cwd: session.cwd,
+            explicitFilePath: session.clientInfo.sessionFilePath
+        )
+        session.heuristicSubagentDisplayTitle = fallbackPresentation?.displayTitle
+    }
+
+    private func syncLinkedQoderChildSessions(for parent: SessionState) {
+        guard parent.clientInfo.brand == .qoder else { return }
+        guard let mirroredPhase = mirroredPhaseForLinkedQoderChild(parent.phase) else { return }
+
+        for sessionId in sessions.keys {
+            guard var child = sessions[sessionId] else { continue }
+            guard child.linkedParentSessionId == parent.sessionId else { continue }
+
+            if mirroredPhase == .ended {
+                guard child.phase != .ended else { continue }
+                markSessionEnded(&child)
+                child.lastActivity = max(child.lastActivity, parent.lastActivity)
+                sessions[sessionId] = child
+                continue
+            }
+
+            guard child.phase != mirroredPhase else { continue }
+            guard child.phase.canTransition(to: mirroredPhase) else { continue }
+
+            child.phase = mirroredPhase
+            child.lastActivity = max(child.lastActivity, parent.lastActivity)
+            sessions[sessionId] = child
+        }
+    }
+
+    private func mirroredPhaseForLinkedQoderChild(_ phase: SessionPhase) -> SessionPhase? {
+        switch phase {
+        case .processing:
+            return nil
+        case .idle:
+            return .idle
+        case .compacting:
+            return .compacting
+        case .waitingForInput:
+            return .waitingForInput
+        case .waitingForApproval(let context):
+            return .waitingForApproval(context)
+        case .ended:
+            return .ended
+        }
     }
 
     /// Parse ISO8601 timestamp string
@@ -946,6 +1088,7 @@ actor SessionStore {
 
         await applyQoderFallbackIntervention(to: &session)
         applyClaudeTranscriptQuestionFallback(to: &session)
+        await refreshQoderFallbackSubagentPresentation(for: payload.sessionId, session: &session)
 
         if payload.isIncremental,
            let continuationAnsweredAt = session.intervention?.externalContinuationAnsweredAt,
@@ -1255,6 +1398,7 @@ actor SessionStore {
         }
 
         sessions[sessionId] = session
+        syncLinkedQoderChildSessions(for: session)
     }
 
     // MARK: - Clear Processing
@@ -1286,6 +1430,7 @@ actor SessionStore {
 
         markSessionEnded(&session)
         sessions[resolvedSessionId] = session
+        syncLinkedQoderChildSessions(for: session)
         cancelPendingCodexPlaceholderPrune(sessionId: resolvedSessionId)
         cancelPendingQoderConversationPoll(sessionId: resolvedSessionId)
         scheduleFinalSessionSync(for: session)
@@ -1293,11 +1438,23 @@ actor SessionStore {
 
     private func archiveSession(sessionId: String) async {
         let resolvedSessionId = resolveCodexSessionAlias(sessionId)
+        let linkedChildSessionIDs = sessions.values
+            .filter { $0.linkedParentSessionId == resolvedSessionId }
+            .map(\.sessionId)
         sessions.removeValue(forKey: resolvedSessionId)
+        for childSessionId in linkedChildSessionIDs {
+            sessions.removeValue(forKey: childSessionId)
+        }
         clearCodexSessionAliases(for: resolvedSessionId)
         cancelPendingSync(sessionId: resolvedSessionId)
         cancelPendingCodexPlaceholderPrune(sessionId: resolvedSessionId)
         cancelPendingQoderConversationPoll(sessionId: resolvedSessionId)
+        for childSessionId in linkedChildSessionIDs {
+            clearCodexSessionAliases(for: childSessionId)
+            cancelPendingSync(sessionId: childSessionId)
+            cancelPendingCodexPlaceholderPrune(sessionId: childSessionId)
+            cancelPendingQoderConversationPoll(sessionId: childSessionId)
+        }
     }
 
     private func markSessionEnded(_ session: inout SessionState) {
@@ -1401,6 +1558,7 @@ actor SessionStore {
 
         await applyQoderFallbackIntervention(to: &session)
         applyClaudeTranscriptQuestionFallback(to: &session)
+        await refreshQoderFallbackSubagentPresentation(for: sessionId, session: &session)
 
         sessions[sessionId] = session
     }
@@ -1725,12 +1883,19 @@ actor SessionStore {
                     cwd: session.cwd,
                     projectName: session.projectName,
                     displayTitle: session.displayTitle,
+                    effectiveDisplayTitle: session.titleOnlySubagentDisplayTitle,
                     sessionName: session.sessionName,
                     previewText: session.previewText,
                     lastMessage: session.lastMessage,
                     clientKind: session.clientInfo.kind.rawValue,
                     clientName: session.clientInfo.name,
                     sessionFilePath: session.clientInfo.sessionFilePath,
+                    presentationMode: session.usesTitleOnlySubagentPresentation ? "titleOnlySubagent" : "standard",
+                    usesTitleOnlySubagentPresentation: session.usesTitleOnlySubagentPresentation,
+                    linkedParentSessionId: session.linkedParentSessionId,
+                    linkedSubagentDisplayTitle: session.linkedSubagentDisplayTitle,
+                    codexSubagentLevel: session.codexSubagentLevel,
+                    codexSubagentLabel: session.codexSubagentLabel,
                     hasIntervention: session.intervention != nil,
                     chatItemCount: session.chatItems.count,
                     lastActivity: session.lastActivity,
@@ -1945,6 +2110,10 @@ actor SessionStore {
         }
         session.chatItems = snapshot.historyItems
         session.conversationInfo = snapshot.conversationInfo
+        session.codexParentThreadId = snapshot.parentThreadId
+        session.codexSubagentDepth = snapshot.subagentDepth
+        session.codexSubagentNickname = snapshot.subagentNickname
+        session.codexSubagentRole = snapshot.subagentRole
         let shouldPreserveExternalIntervention = shouldPreserveExternalCodexIntervention(
             current: session.intervention,
             incoming: snapshot.intervention,
@@ -2606,6 +2775,13 @@ actor SessionStore {
             previewText: previousSession.previewText,
             latestHookMessage: previousSession.latestHookMessage,
             intervention: previousSession.intervention,
+            codexParentThreadId: previousSession.codexParentThreadId,
+            codexSubagentDepth: previousSession.codexSubagentDepth,
+            codexSubagentNickname: previousSession.codexSubagentNickname,
+            codexSubagentRole: previousSession.codexSubagentRole,
+            linkedParentSessionId: previousSession.linkedParentSessionId,
+            linkedSubagentDisplayTitle: previousSession.linkedSubagentDisplayTitle,
+            heuristicSubagentDisplayTitle: previousSession.heuristicSubagentDisplayTitle,
             pid: previousSession.pid,
             tty: previousSession.tty,
             isInTmux: previousSession.isInTmux,

@@ -21,6 +21,10 @@ struct ConversationInfo: Equatable, Sendable {
 actor ConversationParser {
     static let shared = ConversationParser()
 
+    struct QoderSubagentPresentation: Equatable, Sendable {
+        let displayTitle: String
+    }
+
     /// Logger for conversation parser (nonisolated static for cross-context access)
     nonisolated static let logger = Logger(subsystem: "com.wudanwu.pingisland", category: "Parser")
 
@@ -634,6 +638,20 @@ actor ConversationParser {
         return Self.parseQoderConversationHistory(content)
     }
 
+    func qoderFallbackSubagentPresentation(
+        sessionId: String,
+        cwd: String,
+        explicitFilePath: String? = nil
+    ) -> QoderSubagentPresentation? {
+        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd, explicitFilePath: explicitFilePath)
+        guard Self.transcriptFormat(for: sessionFile) == .claudeLike,
+              let content = try? String(contentsOfFile: sessionFile, encoding: .utf8) else {
+            return nil
+        }
+
+        return Self.parseQoderSubagentPresentation(content)
+    }
+
     private static func qoderConversationHistoryPath(sessionId: String) -> String? {
         let shortSessionId = String(sessionId.prefix(8))
         let rootURL = FileManager.default.homeDirectoryForCurrentUser
@@ -746,6 +764,132 @@ actor ConversationParser {
                 "requestId": latestSection.requestId
             ]
         )
+    }
+
+    private static func parseQoderSubagentPresentation(_ content: String) -> QoderSubagentPresentation? {
+        enum FirstMeaningfulContent {
+            case displayableText
+            case toolUse(name: String, input: [String: Any]?)
+        }
+
+        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        var sawSessionMeta = false
+        var sawDisplayableConversationText = false
+        var firstMeaningfulContent: FirstMeaningfulContent?
+
+        for line in lines {
+            guard let lineData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+                continue
+            }
+
+            let type = json["type"] as? String
+            if type == "session_meta" {
+                sawSessionMeta = true
+                break
+            }
+
+            guard let message = json["message"] as? [String: Any] else { continue }
+            for block in contentBlocks(in: message) {
+                let blockType = block["type"] as? String
+
+                if blockType == "tool_use" {
+                    let toolName = block["name"] as? String ?? "Tool"
+                    let toolInput = block["input"] as? [String: Any]
+                    if firstMeaningfulContent == nil {
+                        firstMeaningfulContent = .toolUse(name: toolName, input: toolInput)
+                    }
+                    continue
+                }
+
+                guard blockType == "text",
+                      let text = block["text"] as? String,
+                      let sanitizedText = SessionTextSanitizer.sanitizedDisplayText(text),
+                      isDisplayableText(sanitizedText) else {
+                    continue
+                }
+
+                sawDisplayableConversationText = true
+                if firstMeaningfulContent == nil {
+                    firstMeaningfulContent = .displayableText
+                }
+            }
+        }
+
+        guard !sawSessionMeta, !sawDisplayableConversationText else { return nil }
+        guard case .toolUse(let toolName, let toolInput)? = firstMeaningfulContent else { return nil }
+        guard toolName.caseInsensitiveCompare("Agent") != .orderedSame else { return nil }
+        guard let title = qoderFallbackSubagentTitle(toolName: toolName, input: toolInput) else { return nil }
+
+        return QoderSubagentPresentation(displayTitle: title)
+    }
+
+    private static func qoderFallbackSubagentTitle(toolName: String, input: [String: Any]?) -> String? {
+        let normalizedToolName = toolName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedToolName.isEmpty else { return nil }
+
+        let inputSummary = formattedToolSummaryInput(input)
+        if let inputSummary, !inputSummary.isEmpty {
+            return "Agent · \(humanizedToolName(normalizedToolName)) \(inputSummary)"
+        }
+
+        return "Agent · \(humanizedToolName(normalizedToolName))"
+    }
+
+    private static func humanizedToolName(_ toolName: String) -> String {
+        toolName
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { word in
+                guard let first = word.first else { return "" }
+                return first.uppercased() + word.dropFirst().lowercased()
+            }
+            .joined(separator: " ")
+    }
+
+    private static func formattedToolSummaryInput(_ input: [String: Any]?) -> String? {
+        guard let input else { return nil }
+
+        let preferredPathKeys = [
+            "file_path",
+            "path",
+            "target_file",
+            "relative_workspace_path",
+            "relative_path"
+        ]
+        for key in preferredPathKeys {
+            if let path = input[key] as? String, !path.isEmpty {
+                return URL(fileURLWithPath: path).lastPathComponent
+            }
+        }
+
+        let preferredStringKeys = [
+            "description",
+            "command",
+            "pattern",
+            "query",
+            "url",
+            "prompt"
+        ]
+        for key in preferredStringKeys {
+            if let value = input[key] as? String,
+               let sanitizedValue = SessionTextSanitizer.sanitizedDisplayText(value),
+               !sanitizedValue.isEmpty {
+                return truncateMessage(sanitizedValue, maxLength: 48)
+            }
+        }
+
+        for (_, value) in input {
+            if let value = value as? String,
+               let sanitizedValue = SessionTextSanitizer.sanitizedDisplayText(value),
+               !sanitizedValue.isEmpty {
+                return truncateMessage(sanitizedValue, maxLength: 48)
+            }
+        }
+
+        return nil
     }
 
     private func parseMessageLine(_ json: [String: Any], seenToolIds: inout Set<String>, toolIdToName: inout [String: String]) -> ChatMessage? {

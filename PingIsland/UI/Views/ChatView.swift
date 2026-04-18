@@ -226,7 +226,7 @@ struct ChatView: View {
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.6))
                     .frame(width: 24, height: 24)
 
-                Text(session.displayTitle)
+                Text(session.titleOnlySubagentDisplayTitle)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
                     .lineLimit(1)

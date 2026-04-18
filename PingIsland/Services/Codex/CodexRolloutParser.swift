@@ -3,6 +3,13 @@ import Foundation
 actor CodexRolloutParser {
     static let shared = CodexRolloutParser()
 
+    private struct ParsedSubagentMetadata {
+        let parentThreadId: String?
+        let depth: Int?
+        let nickname: String?
+        let role: String?
+    }
+
     private struct CachedSnapshot {
         let modificationDate: Date
         let snapshot: CodexThreadSnapshot
@@ -80,6 +87,12 @@ actor CodexRolloutParser {
         var origin: String?
         var originator: String?
         var threadSource: String?
+        var subagentMetadata = ParsedSubagentMetadata(
+            parentThreadId: nil,
+            depth: nil,
+            nickname: nil,
+            role: nil
+        )
 
         for (index, line) in lines.enumerated() {
             guard let data = line.data(using: .utf8),
@@ -97,10 +110,18 @@ actor CodexRolloutParser {
                 resolvedThreadId = stringValue(payload["id"]) ?? resolvedThreadId
                 resolvedCwd = stringValue(payload["cwd"]) ?? resolvedCwd
                 sessionName = stringValue(payload["title"]) ?? sessionName
-                let source = stringValue(payload["source"])
+                let sourceValue = payload["source"]
+                let source = stringValue(sourceValue)
                 origin = stringValue(payload["origin"]) ?? (source == "cli" ? "cli" : origin)
                 originator = stringValue(payload["originator"]) ?? originator
                 threadSource = source ?? threadSource
+                if let parsedSubagentMetadata = parseSubagentMetadata(
+                    payload: payload,
+                    sourceValue: sourceValue
+                ) {
+                    subagentMetadata = parsedSubagentMetadata
+                    threadSource = threadSource ?? "subagent"
+                }
 
             case "turn_context":
                 let payload = json["payload"] as? [String: Any] ?? [:]
@@ -336,6 +357,10 @@ actor CodexRolloutParser {
             name: sessionName,
             preview: preview,
             cwd: resolvedCwd,
+            parentThreadId: subagentMetadata.parentThreadId,
+            subagentDepth: subagentMetadata.depth,
+            subagentNickname: subagentMetadata.nickname,
+            subagentRole: subagentMetadata.role,
             clientInfo: resolvedClientInfo,
             intervention: intervention,
             createdAt: createdAt ?? Date(),
@@ -377,6 +402,47 @@ actor CodexRolloutParser {
         }
 
         return nil
+    }
+
+    private func parseSubagentMetadata(
+        payload: [String: Any],
+        sourceValue: Any?
+    ) -> ParsedSubagentMetadata? {
+        let topLevelNickname = stringValue(payload["agent_nickname"])
+        let topLevelRole = stringValue(payload["agent_role"])
+        let forkedFromId = stringValue(payload["forked_from_id"])
+
+        guard let sourceObject = sourceValue as? [String: Any] else {
+            if forkedFromId == nil, topLevelNickname == nil, topLevelRole == nil {
+                return nil
+            }
+
+            return ParsedSubagentMetadata(
+                parentThreadId: forkedFromId,
+                depth: nil,
+                nickname: topLevelNickname,
+                role: topLevelRole
+            )
+        }
+
+        let subagent = sourceObject["subagent"] as? [String: Any]
+        let threadSpawn = subagent?["thread_spawn"] as? [String: Any]
+
+        let parentThreadId = stringValue(threadSpawn?["parent_thread_id"]) ?? forkedFromId
+        let depth = intValue(threadSpawn?["depth"])
+        let nickname = stringValue(threadSpawn?["agent_nickname"]) ?? topLevelNickname
+        let role = stringValue(threadSpawn?["agent_role"]) ?? topLevelRole
+
+        guard parentThreadId != nil || depth != nil || nickname != nil || role != nil else {
+            return nil
+        }
+
+        return ParsedSubagentMetadata(
+            parentThreadId: parentThreadId,
+            depth: depth,
+            nickname: nickname,
+            role: role
+        )
     }
 
     private static func isRunningToolItem(_ item: ChatHistoryItem) -> Bool {

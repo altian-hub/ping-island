@@ -52,6 +52,13 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var previewText: String?
     var latestHookMessage: String?
     var intervention: SessionIntervention?
+    var codexParentThreadId: String?
+    var codexSubagentDepth: Int?
+    var codexSubagentNickname: String?
+    var codexSubagentRole: String?
+    var linkedParentSessionId: String?
+    var linkedSubagentDisplayTitle: String?
+    var heuristicSubagentDisplayTitle: String?
 
     // MARK: - Instance Metadata
 
@@ -116,6 +123,13 @@ struct SessionState: Equatable, Identifiable, Sendable {
         previewText: String? = nil,
         latestHookMessage: String? = nil,
         intervention: SessionIntervention? = nil,
+        codexParentThreadId: String? = nil,
+        codexSubagentDepth: Int? = nil,
+        codexSubagentNickname: String? = nil,
+        codexSubagentRole: String? = nil,
+        linkedParentSessionId: String? = nil,
+        linkedSubagentDisplayTitle: String? = nil,
+        heuristicSubagentDisplayTitle: String? = nil,
         pid: Int? = nil,
         tty: String? = nil,
         isInTmux: Bool = false,
@@ -143,6 +157,13 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.previewText = previewText
         self.latestHookMessage = latestHookMessage
         self.intervention = intervention
+        self.codexParentThreadId = codexParentThreadId
+        self.codexSubagentDepth = codexSubagentDepth
+        self.codexSubagentNickname = codexSubagentNickname
+        self.codexSubagentRole = codexSubagentRole
+        self.linkedParentSessionId = linkedParentSessionId
+        self.linkedSubagentDisplayTitle = linkedSubagentDisplayTitle
+        self.heuristicSubagentDisplayTitle = heuristicSubagentDisplayTitle
         self.pid = pid
         self.tty = tty
         self.isInTmux = isInTmux
@@ -194,6 +215,168 @@ struct SessionState: Equatable, Identifiable, Sendable {
             ?? SessionTextSanitizer.sanitizedDisplayText(conversationInfo.summary)
             ?? SessionTextSanitizer.sanitizedDisplayText(conversationInfo.firstUserMessage)
             ?? projectName
+    }
+
+    /// Codex subagent threads report depth starting at 1 for the first spawned child.
+    /// We surface every spawned child as a subagent in the primary UI.
+    nonisolated var codexSubagentLevel: Int? {
+        guard provider == .codex else { return nil }
+
+        if let depth = codexSubagentDepth {
+            return max(depth, 1)
+        }
+
+        if codexParentThreadId?.isEmpty == false
+            || codexSubagentNickname?.isEmpty == false
+            || codexSubagentRole?.isEmpty == false {
+            return 1
+        }
+
+        return nil
+    }
+
+    nonisolated var isCodexSubagent: Bool {
+        codexSubagentLevel != nil
+    }
+
+    nonisolated var isLinkedSubagentSession: Bool {
+        sanitizedSubagentDisplayText(linkedParentSessionId) != nil
+    }
+
+    nonisolated var isHeuristicSubagentSession: Bool {
+        sanitizedSubagentDisplayText(heuristicSubagentDisplayTitle) != nil
+    }
+
+    nonisolated var isQoderAgentPrefixedSubagent: Bool {
+        guard clientInfo.brand == .qoder else { return false }
+        return qoderAgentPrefixedSubagentDisplayTitle != nil
+    }
+
+    nonisolated var usesTitleOnlySubagentPresentation: Bool {
+        isCodexSubagent
+            || isLinkedSubagentSession
+            || isHeuristicSubagentSession
+            || isQoderAgentPrefixedSubagent
+    }
+
+    /// Primary-list visibility treats linked child sessions like first-level
+    /// subagents so settings can hide or show all child sessions consistently.
+    nonisolated var primarySubagentVisibilityLevel: Int? {
+        if isLinkedSubagentSession {
+            return 1
+        }
+
+        if isHeuristicSubagentSession {
+            return 1
+        }
+
+        if isQoderAgentPrefixedSubagent {
+            return 1
+        }
+
+        guard let subagentLevel = codexSubagentLevel else { return nil }
+        guard subagentLevel > 1 else { return nil }
+        return subagentLevel - 1
+    }
+
+    nonisolated func shouldDisplaySubagent(in mode: SubagentVisibilityMode) -> Bool {
+        guard primarySubagentVisibilityLevel != nil else { return true }
+
+        switch mode {
+        case .hidden:
+            return false
+        case .visible:
+            return true
+        }
+    }
+
+    nonisolated var codexSubagentBadgeText: String? {
+        (isCodexSubagent || isQoderAgentPrefixedSubagent) ? "SUBAGENT" : nil
+    }
+
+    nonisolated var subagentClientTypeBadgeText: String? {
+        guard usesTitleOnlySubagentPresentation else { return nil }
+        return sanitizedSubagentDisplayText(clientInfo.subagentClientTypeLabel(for: provider))
+    }
+
+    nonisolated var shouldUseCodexSubagentCompactPresentation: Bool {
+        isCodexSubagent || isQoderAgentPrefixedSubagent
+    }
+
+    nonisolated var codexSubagentLabel: String? {
+        guard isCodexSubagent else { return nil }
+
+        var parts = ["Subagent"]
+        if let role = sanitizedCodexSubagentText(codexSubagentRole) {
+            parts.append(role)
+        }
+        if let nickname = sanitizedCodexSubagentText(codexSubagentNickname) {
+            parts.append(nickname)
+        } else if let level = codexSubagentLevel {
+            parts.append("Depth \(level)")
+        }
+
+        return parts.joined(separator: " · ")
+    }
+
+    nonisolated var codexSubagentListTitle: String {
+        codexSubagentLabel ?? displayTitle
+    }
+
+    nonisolated var titleOnlySubagentDisplayTitle: String {
+        if isCodexSubagent {
+            return codexSubagentListTitle
+        }
+
+        return sanitizedSubagentDisplayText(linkedSubagentDisplayTitle)
+            ?? sanitizedSubagentDisplayText(heuristicSubagentDisplayTitle)
+            ?? qoderAgentPrefixedSubagentDisplayTitle
+            ?? displayTitle
+    }
+
+    nonisolated func codexSubagentSummaryText(for text: String?) -> String? {
+        let sanitizedText = sanitizedCodexSubagentText(text)
+        guard let label = codexSubagentLabel else {
+            return sanitizedText
+        }
+        guard let sanitizedText, !sanitizedText.isEmpty else {
+            return label
+        }
+
+        if sanitizedText.localizedCaseInsensitiveContains(label) {
+            return sanitizedText
+        }
+        return "\(label) · \(sanitizedText)"
+    }
+
+    private nonisolated func sanitizedCodexSubagentText(_ text: String?) -> String? {
+        sanitizedSubagentDisplayText(text)
+    }
+
+    private nonisolated func sanitizedSubagentDisplayText(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let collapsed = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return collapsed.isEmpty ? nil : collapsed
+    }
+
+    private nonisolated var qoderAgentPrefixedSubagentDisplayTitle: String? {
+        let candidates = [
+            sanitizedSubagentDisplayText(linkedSubagentDisplayTitle),
+            sanitizedSubagentDisplayText(heuristicSubagentDisplayTitle),
+            sanitizedSubagentDisplayText(displayTitle)
+        ].compactMap { $0 }
+
+        return candidates.first(where: { candidate in
+            candidate.range(
+                of: #"^agent\s*·"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+        })
     }
 
     /// Safety net for ghost Codex sessions that have no rollout, no history, and no visible content.

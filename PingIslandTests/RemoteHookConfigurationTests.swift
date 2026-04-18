@@ -338,7 +338,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
                 "hooks": [
                   {
                     "type": "command",
-                    "command": "/Users/wudanwu/.claude/hooks/peon-ping/scripts/hook-handle-use.sh"
+                    "command": "/Users/ping-island/.claude/hooks/peon-ping/scripts/hook-handle-use.sh"
                   }
                 ]
               },
@@ -372,7 +372,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
             .flatMap { $0 }
             .compactMap { $0["command"] as? String }
 
-        XCTAssertFalse(commands.contains { $0.contains("/Users/wudanwu/.claude/hooks/peon-ping") })
+        XCTAssertFalse(commands.contains { $0.contains("/Users/ping-island/.claude/hooks/peon-ping") })
         XCTAssertTrue(commands.contains("/usr/bin/echo keep"))
         XCTAssertTrue(commands.contains { $0.contains("/root/.ping-island/bin/ping-island-bridge") })
     }

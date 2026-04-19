@@ -119,6 +119,7 @@ enum RemoteEndpointConnectionPhase: String, Codable, Equatable, Sendable {
     case disconnected
     case probing
     case bootstrapping
+    case uninstalling
     case connecting
     case connected
     case degraded
@@ -132,6 +133,8 @@ enum RemoteEndpointConnectionPhase: String, Codable, Equatable, Sendable {
             return "检测中"
         case .bootstrapping:
             return "安装中"
+        case .uninstalling:
+            return "卸载中"
         case .connecting:
             return "连接中"
         case .connected:

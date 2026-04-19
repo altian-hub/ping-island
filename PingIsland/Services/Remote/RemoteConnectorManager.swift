@@ -37,7 +37,7 @@ final class RemoteConnectorManager: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
 
-        for endpoint in endpoints where endpoint.authMode == .publicKey {
+        for endpoint in endpoints where shouldAutoReconnectOnStart(endpoint: endpoint) {
             connect(endpointID: endpoint.id, password: nil, forceBootstrap: false)
         }
     }
@@ -204,9 +204,93 @@ final class RemoteConnectorManager: ObservableObject {
     }
 
     func disconnect(endpointID: UUID) {
-        connectors.removeValue(forKey: endpointID)?.stop()
-        pendingRequests.removeAll(for: endpointID)
-        setState(for: endpointID, phase: .disconnected, detail: "已断开远程转发连接")
+        stopLocalConnection(
+            endpointID: endpointID,
+            updateState: true,
+            detail: "已断开远程转发连接"
+        )
+    }
+
+    func uninstallBridge(endpointID: UUID, password: String?) {
+        guard let endpoint = endpoint(for: endpointID) else { return }
+
+        let trimmedPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedPassword = trimmedPassword?.isEmpty == false ? trimmedPassword : nil
+        let credential = resolvedCredential(for: endpointID, requestedPassword: requestedPassword)
+        let effectivePassword = credential.password
+
+        logger.notice(
+            "Remote bridge uninstall requested endpoint=\(endpoint.id.uuidString, privacy: .public) title=\(endpoint.resolvedTitle, privacy: .public) target=\(endpoint.sshTarget, privacy: .public) authMode=\(endpoint.authMode.rawValue, privacy: .public) hasPassword=\(effectivePassword != nil, privacy: .public)"
+        )
+        setState(
+            for: endpointID,
+            phase: .uninstalling,
+            detail: "正在卸载远程 bridge…",
+            lastError: nil,
+            requiresPassword: effectivePassword == nil && endpoint.authMode == .passwordSession
+        )
+        stopLocalConnection(endpointID: endpointID, updateState: false)
+
+        Task {
+            var stage = "probe"
+            do {
+                let probe = try await RemoteSSHCommandRunner.probe(
+                    target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
+                    password: effectivePassword
+                )
+                await MainActor.run {
+                    self.applyProbe(probe, to: endpointID, passwordWasUsed: effectivePassword != nil)
+                }
+
+                stage = "attach-cleanup-local"
+                try await cleanupLocalAttachProcesses(endpointID: endpointID)
+
+                stage = "attach-cleanup-remote"
+                try await cleanupRemoteAttachProcesses(endpointID: endpointID, password: effectivePassword)
+
+                stage = "uninstall"
+                try await uninstallRemoteAgent(endpointID: endpointID, password: effectivePassword, probe: probe)
+
+                await MainActor.run {
+                    self.clearUninstalledRemoteAgentMetadata(endpointID: endpointID)
+                    self.setState(
+                        for: endpointID,
+                        phase: .disconnected,
+                        detail: "远程 bridge 已卸载",
+                        lastError: nil,
+                        requiresPassword: false,
+                        agentVersion: nil
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    let errorDescription = stage == "probe"
+                        ? Self.presentableConnectionError(
+                            stage: stage,
+                            errorDescription: error.localizedDescription
+                        )
+                        : error.localizedDescription
+                    self.handleConnectionFailure(
+                        endpointID: endpointID,
+                        credentialSource: credential.source
+                    )
+                    self.logger.error(
+                        "Remote bridge uninstall failed endpoint=\(endpoint.id.uuidString, privacy: .public) title=\(endpoint.resolvedTitle, privacy: .public) target=\(endpoint.sshTarget, privacy: .public) stage=\(stage, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                    self.setState(
+                        for: endpointID,
+                        phase: .failed,
+                        detail: "远程卸载失败",
+                        lastError: errorDescription,
+                        requiresPassword: self.shouldRequirePasswordAfterConnectionFailure(
+                            endpointID: endpointID,
+                            credentialSource: credential.source
+                        )
+                    )
+                }
+            }
+        }
     }
 
     func respondToPermission(toolUseId: String, decision: String, reason: String? = nil) {
@@ -323,6 +407,18 @@ final class RemoteConnectorManager: ObservableObject {
         logger.debug(
             "Remote attach cleanup completed endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public)"
         )
+    }
+
+    private func stopLocalConnection(
+        endpointID: UUID,
+        updateState: Bool,
+        detail: String = "已断开远程转发连接"
+    ) {
+        connectors.removeValue(forKey: endpointID)?.stop()
+        pendingRequests.removeAll(for: endpointID)
+        if updateState {
+            setState(for: endpointID, phase: .disconnected, detail: detail)
+        }
     }
 
     private func cleanupLocalAttachProcesses(endpointID: UUID) async throws {
@@ -631,6 +727,117 @@ final class RemoteConnectorManager: ObservableObject {
         }
     }
 
+    private func uninstallRemoteAgent(endpointID: UUID, password: String?, probe: RemoteHostProbe) async throws {
+        guard let endpoint = endpoint(for: endpointID) else { return }
+        let remoteHookProfiles = Self.remoteManagedHookProfiles()
+
+        logger.notice(
+            "Remote uninstall starting endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public) installRoot=\(endpoint.remoteInstallRoot, privacy: .public)"
+        )
+
+        for profile in remoteHookProfiles {
+            switch profile.installationKind {
+            case .jsonHooks:
+                let remoteConfigPath = Self.remoteConfigurationPath(
+                    relativePath: profile.configurationRelativePaths[0],
+                    homeDirectory: probe.homeDirectory
+                )
+                let existingConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
+                    target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
+                    remotePath: remoteConfigPath,
+                    password: password
+                )
+                let updatedData = HookInstaller.updatedConfigurationData(
+                    existingData: existingConfig?.isEmpty == true ? nil : existingConfig,
+                    profile: profile,
+                    customCommand: "",
+                    installing: false
+                )
+                try await RemoteSSHCommandRunner.writeRemoteFile(
+                    target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
+                    remotePath: remoteConfigPath,
+                    contents: updatedData,
+                    password: password
+                )
+
+            case .hookDirectory:
+                let remoteDirectoryPath = Self.remoteConfigurationPath(
+                    relativePath: profile.configurationRelativePaths[0],
+                    homeDirectory: probe.homeDirectory
+                )
+                _ = try await RemoteSSHCommandRunner.runSSH(
+                    target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
+                    password: password,
+                    remoteCommand: "rm -rf \(quoted(remoteDirectoryPath))",
+                    acceptNewHostKey: true,
+                    allowFailure: true
+                )
+
+                if let activationPath = profile.activationConfigurationRelativePath,
+                   let entryName = profile.activationEntryName {
+                    let remoteActivationPath = Self.remoteConfigurationPath(
+                        relativePath: activationPath,
+                        homeDirectory: probe.homeDirectory
+                    )
+                    let existingActivationConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
+                        target: endpoint.sshTarget,
+                        port: endpoint.sshPort,
+                        remotePath: remoteActivationPath,
+                        password: password
+                    )
+                    let updatedActivationData = HookInstaller.updatedInternalHookConfigurationData(
+                        existingData: existingActivationConfig?.isEmpty == true ? nil : existingActivationConfig,
+                        entryName: entryName,
+                        installing: false
+                    )
+                    try await RemoteSSHCommandRunner.writeRemoteFile(
+                        target: endpoint.sshTarget,
+                        port: endpoint.sshPort,
+                        remotePath: remoteActivationPath,
+                        contents: updatedActivationData,
+                        password: password
+                    )
+                }
+
+            case .pluginDirectory:
+                let remoteDirectoryPath = Self.remoteConfigurationPath(
+                    relativePath: profile.configurationRelativePaths[0],
+                    homeDirectory: probe.homeDirectory
+                )
+                _ = try await RemoteSSHCommandRunner.runSSH(
+                    target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
+                    password: password,
+                    remoteCommand: "rm -rf \(quoted(remoteDirectoryPath))",
+                    acceptNewHostKey: true,
+                    allowFailure: true
+                )
+
+            case .pluginFile:
+                continue
+            }
+        }
+
+        _ = try await RemoteSSHCommandRunner.runSSH(
+            target: endpoint.sshTarget,
+            port: endpoint.sshPort,
+            password: password,
+            remoteCommand: Self.remoteBootstrapUninstallCommand(
+                installRoot: endpoint.remoteInstallRoot,
+                controlSocketPath: endpoint.remoteControlSocketPath,
+                hookSocketPath: endpoint.remoteHookSocketPath
+            ),
+            acceptNewHostKey: true,
+            allowFailure: true
+        )
+        logger.notice(
+            "Remote uninstall completed endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public)"
+        )
+    }
+
     private func ensureRemoteAgentRunning(endpointID: UUID, password: String?) async throws {
         guard let endpoint = endpoint(for: endpointID) else { return }
         logger.notice(
@@ -702,6 +909,21 @@ final class RemoteConnectorManager: ObservableObject {
         persistEndpoints()
     }
 
+    private func clearUninstalledRemoteAgentMetadata(endpointID: UUID) {
+        guard var endpoint = endpoint(for: endpointID) else { return }
+        endpoint.agentVersion = nil
+        endpoint.lastBootstrapAt = nil
+        endpoint.lastConnectedAt = nil
+        updateEndpoint(endpoint)
+    }
+
+    private func shouldAutoReconnectOnStart(endpoint: RemoteEndpoint) -> Bool {
+        Self.shouldAutoReconnectOnLaunch(
+            endpoint: endpoint,
+            hasReusablePassword: hasReusablePassword(for: endpoint.id)
+        )
+    }
+
     func shouldBootstrapRemoteAgent(endpointID: UUID, forceBootstrap: Bool) -> Bool {
         guard let endpoint = endpoint(for: endpointID) else {
             return forceBootstrap
@@ -718,6 +940,39 @@ final class RemoteConnectorManager: ObservableObject {
         return endpoint.lastBootstrapAt == nil
             && endpoint.lastConnectedAt == nil
             && endpoint.agentVersion == nil
+    }
+
+    nonisolated static func shouldAutoReconnectOnLaunch(
+        endpoint: RemoteEndpoint,
+        hasReusablePassword: Bool
+    ) -> Bool {
+        guard endpoint.lastConnectedAt != nil else {
+            return false
+        }
+
+        switch endpoint.authMode {
+        case .passwordSession:
+            return hasReusablePassword
+        case .unknown, .publicKey:
+            return true
+        }
+    }
+
+    nonisolated static func normalizedLinuxBridgeArchitecture(_ architecture: String) -> String? {
+        switch architecture.lowercased() {
+        case "x86_64", "amd64":
+            return "x86_64"
+        default:
+            return nil
+        }
+    }
+
+    nonisolated static func remoteLinuxBridgeBinaryAssetName(normalizedArchitecture: String) -> String {
+        "PingIslandBridge-linux-\(normalizedArchitecture)"
+    }
+
+    nonisolated static func remoteLinuxBridgeArchiveAssetName(normalizedArchitecture: String) -> String {
+        remoteLinuxBridgeBinaryAssetName(normalizedArchitecture: normalizedArchitecture) + ".zip"
     }
 
     func hasReusablePassword(for endpointID: UUID) -> Bool {
@@ -892,6 +1147,22 @@ final class RemoteConnectorManager: ObservableObject {
         """
         mv -f \(shellQuote(stagedBridgePath)) \(shellQuote("\(installRoot)/bin/PingIslandBridge"))
         chmod 755 \(shellQuote("\(installRoot)/bin/PingIslandBridge")) \(shellQuote("\(installRoot)/bin/ping-island-bridge"))
+        """
+    }
+
+    nonisolated static func remoteBootstrapUninstallCommand(
+        installRoot: String,
+        controlSocketPath: String,
+        hookSocketPath: String
+    ) -> String {
+        let servicePattern = "\(installRoot)/bin/[P]ingIslandBridge --mode remote-agent-service"
+        let attachPattern = "\(installRoot)/bin/[P]ingIslandBridge --mode remote-agent-attach"
+        return """
+        pkill -f \(shellQuote(servicePattern)) >/dev/null 2>&1 || true
+        pkill -f \(shellQuote(attachPattern)) >/dev/null 2>&1 || true
+        sleep 1
+        rm -f \(shellQuote(controlSocketPath)) \(shellQuote(hookSocketPath))
+        rm -rf \(shellQuote(installRoot))
         """
     }
 
@@ -1133,6 +1404,7 @@ private final class RemoteAttachConnector {
     private var stdoutBuffer = Data()
     private let disconnectLock = NSLock()
     private var didFinishDisconnect = false
+    private var suppressDisconnectCallback = false
 
     init(
         endpoint: RemoteEndpoint,
@@ -1201,6 +1473,7 @@ private final class RemoteAttachConnector {
     }
 
     func stop() {
+        suppressDisconnectCallback = true
         stdoutHandle?.readabilityHandler = nil
         if let process, process.isRunning {
             process.terminate()
@@ -1269,6 +1542,7 @@ private final class RemoteAttachConnector {
         defer { disconnectLock.unlock() }
         guard !didFinishDisconnect else { return }
         didFinishDisconnect = true
+        guard !suppressDisconnectCallback else { return }
         onDisconnect(error)
     }
 

@@ -380,7 +380,7 @@ private struct SettingsPanelContentView: View {
     @State private var pendingHookReinstallProfile: ManagedHookClientProfile?
     @State private var showingCustomHookInstallSheet = false
     @State private var showingRemoteHostSheet = false
-    @State private var remotePasswordPromptEndpoint: RemoteEndpoint?
+    @State private var remotePasswordPromptRequest: RemotePasswordPromptRequest?
 
     var body: some View {
         ZStack {
@@ -454,12 +454,17 @@ private struct SettingsPanelContentView: View {
                 showingRemoteHostSheet = false
             }
         }
-        .sheet(item: $remotePasswordPromptEndpoint) { endpoint in
-            RemotePasswordPromptSheet(endpoint: endpoint) { password in
-                remotePasswordPromptEndpoint = nil
-                remoteManager.connect(endpointID: endpoint.id, password: password)
+        .sheet(item: $remotePasswordPromptRequest) { request in
+            RemotePasswordPromptSheet(request: request) { password in
+                remotePasswordPromptRequest = nil
+                switch request.action {
+                case .connect:
+                    remoteManager.connect(endpointID: request.endpoint.id, password: password)
+                case .uninstallBridge:
+                    remoteManager.uninstallBridge(endpointID: request.endpoint.id, password: password)
+                }
             } onDismiss: {
-                remotePasswordPromptEndpoint = nil
+                remotePasswordPromptRequest = nil
             }
         }
     }
@@ -1224,10 +1229,22 @@ private struct SettingsPanelContentView: View {
                             connectAction: { password in
                                 remoteManager.connect(endpointID: endpoint.id, password: password)
                             },
-                            requestPasswordAction: {
-                                remotePasswordPromptEndpoint = endpoint
+                            requestConnectPasswordAction: {
+                                remotePasswordPromptRequest = RemotePasswordPromptRequest(
+                                    endpoint: endpoint,
+                                    action: .connect
+                                )
                             },
                             disconnectAction: { remoteManager.disconnect(endpointID: endpoint.id) },
+                            uninstallAction: { password in
+                                remoteManager.uninstallBridge(endpointID: endpoint.id, password: password)
+                            },
+                            requestUninstallPasswordAction: {
+                                remotePasswordPromptRequest = RemotePasswordPromptRequest(
+                                    endpoint: endpoint,
+                                    action: .uninstallBridge
+                                )
+                            },
                             removeAction: { remoteManager.removeEndpoint(id: endpoint.id) }
                         )
 
@@ -1262,6 +1279,7 @@ private struct SettingsPanelContentView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(appLocalized: "添加远程主机后，Island 会通过 SSH 检查环境、安装远程 bridge，并配置 Claude hooks。")
                     Text(appLocalized: "连接成功后，远程会话会回传到本机显示；如果密码连接失败，需要重新输入密码。")
+                    Text(appLocalized: "如果不再需要远端集成，可在这里直接卸载 bridge；这会删除远端 `~/.ping-island` 并撤回 Island 托管的 hooks。")
                 }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white.opacity(0.72))
@@ -2073,8 +2091,10 @@ private struct RemoteHostManagementLine: View {
     let runtimeState: RemoteEndpointRuntimeState
     let hasReusablePassword: Bool
     let connectAction: (String?) -> Void
-    let requestPasswordAction: () -> Void
+    let requestConnectPasswordAction: () -> Void
     let disconnectAction: () -> Void
+    let uninstallAction: (String?) -> Void
+    let requestUninstallPasswordAction: () -> Void
     let removeAction: () -> Void
 
     var body: some View {
@@ -2139,23 +2159,48 @@ private struct RemoteHostManagementLine: View {
 
             HStack(spacing: 10) {
                 if runtimeState.phase == .connected {
-                    HookManagementButton(title: "断开", tint: TerminalColors.amber, action: disconnectAction)
+                    HookManagementButton(
+                        title: "断开",
+                        tint: TerminalColors.amber,
+                        isDisabled: isBusy
+                    ) {
+                        disconnectAction()
+                    }
                 } else {
                     HookManagementButton(
                         title: connectButtonTitle,
                         tint: TerminalColors.blue,
                         isLoading: isConnecting,
-                        isDisabled: isConnecting
+                        isDisabled: isBusy
                     ) {
                         if shouldPromptForPassword {
-                            requestPasswordAction()
+                            requestConnectPasswordAction()
                         } else {
                             connectAction(nil)
                         }
                     }
                 }
 
-                HookManagementButton(title: "删除", tint: TerminalColors.amber, action: removeAction)
+                HookManagementButton(
+                    title: "卸载 bridge",
+                    tint: TerminalColors.amber,
+                    isLoading: isUninstalling,
+                    isDisabled: isBusy
+                ) {
+                    if shouldPromptForUninstallPassword {
+                        requestUninstallPasswordAction()
+                    } else {
+                        uninstallAction(nil)
+                    }
+                }
+
+                HookManagementButton(
+                    title: "删除",
+                    tint: TerminalColors.amber,
+                    isDisabled: isBusy
+                ) {
+                    removeAction()
+                }
             }
 
             if let lastError = runtimeState.lastError, !lastError.isEmpty {
@@ -2186,13 +2231,25 @@ private struct RemoteHostManagementLine: View {
         runtimeState.requiresPassword || (endpoint.authMode == .passwordSession && !hasReusablePassword)
     }
 
+    private var shouldPromptForUninstallPassword: Bool {
+        runtimeState.requiresPassword || (endpoint.authMode == .passwordSession && !hasReusablePassword)
+    }
+
     private var isConnecting: Bool {
         switch runtimeState.phase {
         case .probing, .bootstrapping, .connecting:
             return true
-        case .disconnected, .connected, .degraded, .failed:
+        case .disconnected, .uninstalling, .connected, .degraded, .failed:
             return false
         }
+    }
+
+    private var isUninstalling: Bool {
+        runtimeState.phase == .uninstalling
+    }
+
+    private var isBusy: Bool {
+        isConnecting || isUninstalling
     }
 
     private var connectButtonTitle: String {
@@ -2220,6 +2277,8 @@ private struct RemoteHostManagementLine: View {
             return TerminalColors.amber
         case .connecting, .probing, .bootstrapping:
             return TerminalColors.blue
+        case .uninstalling:
+            return TerminalColors.amber
         case .disconnected:
             return .white.opacity(0.68)
         }
@@ -2372,8 +2431,40 @@ private struct AddRemoteHostSheet: View {
     }
 }
 
-private struct RemotePasswordPromptSheet: View {
+private enum RemotePasswordPromptAction: String {
+    case connect
+    case uninstallBridge
+
+    var titleFormat: String {
+        switch self {
+        case .connect:
+            return "连接 %@"
+        case .uninstallBridge:
+            return "卸载 %@ 的 bridge"
+        }
+    }
+
+    var submitTitle: String {
+        switch self {
+        case .connect:
+            return "连接"
+        case .uninstallBridge:
+            return "卸载"
+        }
+    }
+}
+
+private struct RemotePasswordPromptRequest: Identifiable {
     let endpoint: RemoteEndpoint
+    let action: RemotePasswordPromptAction
+
+    var id: String {
+        "\(endpoint.id.uuidString)-\(action.rawValue)"
+    }
+}
+
+private struct RemotePasswordPromptSheet: View {
+    let request: RemotePasswordPromptRequest
     let onSubmit: (String) -> Void
     let onDismiss: () -> Void
 
@@ -2381,14 +2472,14 @@ private struct RemotePasswordPromptSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(verbatim: AppLocalization.format("连接 %@", endpoint.resolvedTitle))
+            Text(verbatim: AppLocalization.format(request.action.titleFormat, request.endpoint.resolvedTitle))
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(.white)
 
-            if let sshURL = endpoint.sshURL {
+            if let sshURL = request.endpoint.sshURL {
                 Link(destination: sshURL) {
                     HStack(spacing: 4) {
-                        Text(endpoint.sshURL?.absoluteString ?? endpoint.sshTarget)
+                        Text(request.endpoint.sshURL?.absoluteString ?? request.endpoint.sshTarget)
                             .lineLimit(1)
                             .truncationMode(.middle)
 
@@ -2400,7 +2491,7 @@ private struct RemotePasswordPromptSheet: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Text(endpoint.sshTarget)
+                Text(request.endpoint.sshTarget)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.56))
             }
@@ -2445,18 +2536,18 @@ private struct RemotePasswordPromptSheet: View {
                 .buttonStyle(.plain)
 
                 Button(action: submitPassword) {
-                    Text(appLocalized: "连接")
+                    Text(appLocalized: request.action.submitTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(password.isEmpty ? .white.opacity(0.4) : .white)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(password.isEmpty ? .white.opacity(0.04) : TerminalColors.blue.opacity(0.5))
+                                .fill(password.isEmpty ? .white.opacity(0.04) : buttonTint.opacity(0.5))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(password.isEmpty ? .white.opacity(0.08) : TerminalColors.blue.opacity(0.5), lineWidth: 1)
+                                .strokeBorder(password.isEmpty ? .white.opacity(0.08) : buttonTint.opacity(0.5), lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -2473,6 +2564,15 @@ private struct RemotePasswordPromptSheet: View {
     private func submitPassword() {
         guard !password.isEmpty else { return }
         onSubmit(password)
+    }
+
+    private var buttonTint: Color {
+        switch request.action {
+        case .connect:
+            return TerminalColors.blue
+        case .uninstallBridge:
+            return TerminalColors.amber
+        }
     }
 }
 

@@ -27,6 +27,38 @@ final class RemoteHookConfigurationTests: XCTestCase {
         XCTAssertTrue(command.contains("chmod 755 '/root/.ping-island/bin/PingIslandBridge' '/root/.ping-island/bin/ping-island-bridge'"))
     }
 
+    func testRemoteBootstrapUninstallCommandStopsBridgeAndRemovesInstallRoot() {
+        let command = RemoteConnectorManager.remoteBootstrapUninstallCommand(
+            installRoot: "/root/.ping-island",
+            controlSocketPath: "/root/.ping-island/run/agent-control.sock",
+            hookSocketPath: "/root/.ping-island/run/agent-hook.sock"
+        )
+
+        XCTAssertTrue(command.contains("pkill -f '/root/.ping-island/bin/[P]ingIslandBridge --mode remote-agent-service'"))
+        XCTAssertTrue(command.contains("pkill -f '/root/.ping-island/bin/[P]ingIslandBridge --mode remote-agent-attach'"))
+        XCTAssertTrue(command.contains("rm -f '/root/.ping-island/run/agent-control.sock' '/root/.ping-island/run/agent-hook.sock'"))
+        XCTAssertTrue(command.contains("rm -rf '/root/.ping-island'"))
+    }
+
+    func testRemoteUninstallPhaseUsesDedicatedTitle() {
+        XCTAssertEqual(RemoteEndpointConnectionPhase.uninstalling.titleKey, "卸载中")
+    }
+
+    func testRemoteLinuxBridgeAssetNamesPreferZipArchiveDownload() {
+        XCTAssertEqual(
+            RemoteConnectorManager.normalizedLinuxBridgeArchitecture("amd64"),
+            "x86_64"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.remoteLinuxBridgeBinaryAssetName(normalizedArchitecture: "x86_64"),
+            "PingIslandBridge-linux-x86_64"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.remoteLinuxBridgeArchiveAssetName(normalizedArchitecture: "x86_64"),
+            "PingIslandBridge-linux-x86_64.zip"
+        )
+    }
+
     func testRemoteManagedHookProfilesIncludeSupportedCliIntegrations() {
         let profileIDs = Set(RemoteConnectorManager.remoteManagedHookProfiles().map(\.id))
 
@@ -90,6 +122,69 @@ final class RemoteHookConfigurationTests: XCTestCase {
             RemoteConnectorManager.shouldBootstrapRemoteAgent(
                 endpoint: endpoint,
                 forceBootstrap: false
+            )
+        )
+    }
+
+    func testShouldAutoReconnectOnLaunchForPreviouslyConnectedPublicKeyHost() {
+        let endpoint = RemoteEndpoint(
+            displayName: "Known Host",
+            sshTarget: "dev@example",
+            authMode: .publicKey,
+            lastConnectedAt: Date()
+        )
+
+        XCTAssertTrue(
+            RemoteConnectorManager.shouldAutoReconnectOnLaunch(
+                endpoint: endpoint,
+                hasReusablePassword: false
+            )
+        )
+    }
+
+    func testShouldAutoReconnectOnLaunchForPreviouslyConnectedPasswordHostWithSavedCredential() {
+        let endpoint = RemoteEndpoint(
+            displayName: "Known Host",
+            sshTarget: "dev@example",
+            authMode: .passwordSession,
+            lastConnectedAt: Date()
+        )
+
+        XCTAssertTrue(
+            RemoteConnectorManager.shouldAutoReconnectOnLaunch(
+                endpoint: endpoint,
+                hasReusablePassword: true
+            )
+        )
+    }
+
+    func testShouldNotAutoReconnectOnLaunchForPasswordHostWithoutSavedCredential() {
+        let endpoint = RemoteEndpoint(
+            displayName: "Known Host",
+            sshTarget: "dev@example",
+            authMode: .passwordSession,
+            lastConnectedAt: Date()
+        )
+
+        XCTAssertFalse(
+            RemoteConnectorManager.shouldAutoReconnectOnLaunch(
+                endpoint: endpoint,
+                hasReusablePassword: false
+            )
+        )
+    }
+
+    func testShouldNotAutoReconnectOnLaunchForFreshEndpoint() {
+        let endpoint = RemoteEndpoint(
+            displayName: "Fresh Host",
+            sshTarget: "dev@example",
+            authMode: .publicKey
+        )
+
+        XCTAssertFalse(
+            RemoteConnectorManager.shouldAutoReconnectOnLaunch(
+                endpoint: endpoint,
+                hasReusablePassword: true
             )
         )
     }

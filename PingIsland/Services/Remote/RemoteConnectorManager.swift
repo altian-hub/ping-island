@@ -52,10 +52,16 @@ final class RemoteConnectorManager: ObservableObject {
     }
 
     @discardableResult
-    func addEndpoint(displayName: String, sshTarget: String) -> RemoteEndpoint {
+    func addEndpoint(displayName: String, sshTarget: String, sshPort: Int = RemoteSSHLink.defaultPort) -> RemoteEndpoint {
+        let trimmedTarget = sshTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedLink = RemoteSSHLink(sshTarget: trimmedTarget)
+        let effectivePort = sshPort == RemoteSSHLink.defaultPort
+            ? (parsedLink?.port ?? RemoteSSHLink.defaultPort)
+            : sshPort
         let endpoint = RemoteEndpoint(
             displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
-            sshTarget: sshTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+            sshTarget: parsedLink?.commandTarget ?? trimmedTarget,
+            sshPort: effectivePort
         )
         endpoints.append(endpoint)
         persistEndpoints()
@@ -96,6 +102,7 @@ final class RemoteConnectorManager: ObservableObject {
             do {
                 let probe = try await RemoteSSHCommandRunner.probe(
                     target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
                     password: effectivePassword
                 )
                 await MainActor.run {
@@ -181,6 +188,10 @@ final class RemoteConnectorManager: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
+                    let errorDescription = Self.presentableConnectionError(
+                        stage: stage,
+                        errorDescription: error.localizedDescription
+                    )
                     self.handleConnectionFailure(
                         endpointID: endpointID,
                         credentialSource: credential.source
@@ -191,8 +202,8 @@ final class RemoteConnectorManager: ObservableObject {
                     self.setState(
                         for: endpointID,
                         phase: .failed,
-                        detail: "远程连接失败",
-                        lastError: error.localizedDescription,
+                        detail: Self.connectionFailureDetail(for: stage),
+                        lastError: errorDescription,
                         requiresPassword: shouldRequirePasswordAfterConnectionFailure(
                             endpointID: endpointID,
                             credentialSource: credential.source
@@ -398,6 +409,7 @@ final class RemoteConnectorManager: ObservableObject {
 
         _ = try await RemoteSSHCommandRunner.runSSH(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             password: password,
             remoteCommand: """
             pkill -f \(quoted("\(endpoint.remoteInstallRoot)/bin/[P]ingIslandBridge --mode remote-agent-attach")) >/dev/null 2>&1 || true
@@ -424,9 +436,10 @@ final class RemoteConnectorManager: ObservableObject {
     private func cleanupLocalAttachProcesses(endpointID: UUID) async throws {
         guard let endpoint = endpoint(for: endpointID) else { return }
 
-        let escapedTarget = NSRegularExpression.escapedPattern(for: endpoint.sshTarget)
+        let escapedTarget = NSRegularExpression.escapedPattern(for: endpoint.sshCommandTarget)
         let escapedControlSocket = NSRegularExpression.escapedPattern(for: endpoint.remoteControlSocketPath)
-        let pattern = "ssh .*\(escapedTarget).*(remote-agent-attach|--mode remote-agent-attach).*\(escapedControlSocket)"
+        let portFragment = endpoint.sshPort == RemoteSSHLink.defaultPort ? "" : ".*-p\\s+\(endpoint.sshPort)"
+        let pattern = "ssh\(portFragment) .*\(escapedTarget).*(remote-agent-attach|--mode remote-agent-attach).*\(escapedControlSocket)"
 
         let pgrep = Process()
         pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
@@ -583,6 +596,7 @@ final class RemoteConnectorManager: ObservableObject {
 
         _ = try await RemoteSSHCommandRunner.runSSH(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             password: password,
             remoteCommand: Self.remoteBootstrapPrepareCommand(
                 installRoot: endpoint.remoteInstallRoot,
@@ -602,6 +616,7 @@ final class RemoteConnectorManager: ObservableObject {
         try await RemoteSSHCommandRunner.copyFile(
             localURL: bridgeBinaryURL,
             remoteTarget: endpoint.sshTarget,
+            port: endpoint.sshPort,
             remotePath: stagedBridgePath,
             password: password
         )
@@ -616,12 +631,14 @@ final class RemoteConnectorManager: ObservableObject {
         """
         try await RemoteSSHCommandRunner.writeRemoteFile(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             remotePath: "\(endpoint.remoteInstallRoot)/bin/ping-island-bridge",
             contents: launcherScript.data(using: .utf8) ?? Data(),
             password: password
         )
         _ = try await RemoteSSHCommandRunner.runSSH(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             password: password,
             remoteCommand: Self.remoteBootstrapInstallCommand(
                 installRoot: endpoint.remoteInstallRoot,
@@ -648,6 +665,7 @@ final class RemoteConnectorManager: ObservableObject {
                 )
                 let existingConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
                     target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
                     remotePath: remoteConfigPath,
                     password: password
                 )
@@ -663,6 +681,7 @@ final class RemoteConnectorManager: ObservableObject {
                 )
                 try await RemoteSSHCommandRunner.writeRemoteFile(
                     target: endpoint.sshTarget,
+                    port: endpoint.sshPort,
                     remotePath: remoteConfigPath,
                     contents: updatedData,
                     password: password
@@ -689,6 +708,7 @@ final class RemoteConnectorManager: ObservableObject {
                 for (name, content) in remoteFiles {
                     try await RemoteSSHCommandRunner.writeRemoteFile(
                         target: endpoint.sshTarget,
+                        port: endpoint.sshPort,
                         remotePath: "\(remoteDirectoryPath)/\(name)",
                         contents: Data(content.utf8),
                         password: password
@@ -703,6 +723,7 @@ final class RemoteConnectorManager: ObservableObject {
                     )
                     let existingActivationConfig = try? await RemoteSSHCommandRunner.readRemoteFile(
                         target: endpoint.sshTarget,
+                        port: endpoint.sshPort,
                         remotePath: remoteActivationPath,
                         password: password
                     )
@@ -713,6 +734,7 @@ final class RemoteConnectorManager: ObservableObject {
                     )
                     try await RemoteSSHCommandRunner.writeRemoteFile(
                         target: endpoint.sshTarget,
+                        port: endpoint.sshPort,
                         remotePath: remoteActivationPath,
                         contents: updatedActivationData,
                         password: password
@@ -879,6 +901,7 @@ final class RemoteConnectorManager: ObservableObject {
         )
         _ = try await RemoteSSHCommandRunner.runSSH(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             password: password,
             remoteCommand: command,
             acceptNewHostKey: true
@@ -908,23 +931,14 @@ final class RemoteConnectorManager: ObservableObject {
             return detectedHostname
         }
 
+        if let host = sanitizedNonEmpty(endpoint?.sshLink?.host) {
+            return host
+        }
+
         guard let sshTarget = sanitizedNonEmpty(endpoint?.sshTarget) else {
             return nil
         }
-
-        let withoutUser = sshTarget.split(separator: "@").last.map(String.init) ?? sshTarget
-        if withoutUser.hasPrefix("["),
-           let closingBracketIndex = withoutUser.firstIndex(of: "]") {
-            let bracketHost = String(withoutUser[withoutUser.index(after: withoutUser.startIndex)..<closingBracketIndex])
-            return sanitizedNonEmpty(bracketHost)
-        }
-
-        if let colonIndex = withoutUser.lastIndex(of: ":"),
-           withoutUser[withoutUser.index(after: colonIndex)...].allSatisfy(\.isNumber) {
-            return sanitizedNonEmpty(String(withoutUser[..<colonIndex]))
-        }
-
-        return sanitizedNonEmpty(withoutUser)
+        return sanitizedNonEmpty(sshTarget.split(separator: "@").last.map(String.init) ?? sshTarget)
     }
 
     nonisolated static func resolvedRemoteToolUseID(
@@ -1076,7 +1090,60 @@ final class RemoteConnectorManager: ObservableObject {
         return trimmed
     }
 
-    private static func isIPAddressLike(_ value: String) -> Bool {
+    nonisolated static func connectionFailureDetail(for stage: String) -> String {
+        switch stage {
+        case let stage where stage.hasPrefix("probe"):
+            return "远程主机检测失败"
+        case let stage where stage.hasPrefix("bootstrap"):
+            return "远程初始化失败"
+        default:
+            return "远程连接失败"
+        }
+    }
+
+    nonisolated static func presentableConnectionError(
+        stage: String,
+        errorDescription: String
+    ) -> String {
+        let normalized = errorDescription
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = normalized.lowercased()
+
+        if lowercased.contains("permission denied") {
+            return "SSH 认证失败，请重新输入密码或检查远程 SSH 凭据。"
+        }
+
+        if lowercased.contains("connection timed out") || lowercased.contains("operation timed out") {
+            return "SSH 连接超时，请检查远程主机地址、端口和网络连通性。"
+        }
+
+        if lowercased.contains("connection refused") {
+            return "SSH 连接被拒绝，请确认远程 SSH 服务和端口配置。"
+        }
+
+        if lowercased.contains("host key verification failed") {
+            return "SSH 主机指纹校验失败，请确认远程主机指纹后重新连接。"
+        }
+
+        if lowercased.contains(".hermes/plugins/ping_island") && lowercased.contains("no such file or directory") {
+            return stage.hasPrefix("bootstrap")
+                ? "无法写入远程 Hermes 插件目录，请确认远程主目录可写后重试。"
+                : "远程 Hermes 插件目录不可用，暂时无法写入插件文件。"
+        }
+
+        if lowercased.contains("dest open") && lowercased.contains("no such file or directory") {
+            return "远程目标目录不存在，无法写入初始化文件。"
+        }
+
+        if let firstLine = normalized.split(separator: "\n", omittingEmptySubsequences: true).first {
+            return String(firstLine)
+        }
+
+        return normalized
+    }
+
+    nonisolated private static func isIPAddressLike(_ value: String) -> Bool {
         let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let ipv4Parts = candidate.split(separator: ".")
         if ipv4Parts.count == 4,
@@ -1299,6 +1366,11 @@ final class RemoteConnectorManager: ObservableObject {
             paths = [configurationPath, NSString(string: configurationPath).deletingLastPathComponent]
         case .jsonHooks, .pluginFile:
             paths = [NSString(string: configurationPath).deletingLastPathComponent]
+        case .pluginDirectory:
+            paths = [
+                NSString(string: configurationPath).deletingLastPathComponent,
+                configurationPath
+            ]
         }
 
         if let activationRelativePath = profile.activationConfigurationRelativePath {
@@ -1424,7 +1496,7 @@ private struct RemoteEndpointCredentialStore {
         var addQuery = query
         addQuery[kSecValueData as String] = passwordData
         addQuery[kSecAttrLabel as String] = endpoint.resolvedTitle
-        addQuery[kSecAttrComment as String] = endpoint.sshTarget
+        addQuery[kSecAttrComment as String] = endpoint.sshURL?.absoluteString ?? endpoint.sshTarget
         return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
@@ -1502,6 +1574,7 @@ private final class RemoteAttachConnector {
         let stderrPipe = Pipe()
         let process = try RemoteSSHCommandRunner.makeSSHProcess(
             target: endpoint.sshTarget,
+            port: endpoint.sshPort,
             password: password,
             remoteCommand: "\(shellQuote("\(endpoint.remoteInstallRoot)/bin/ping-island-bridge")) --mode remote-agent-attach --control-socket \(shellQuote(endpoint.remoteControlSocketPath))",
             acceptNewHostKey: true
@@ -1666,13 +1739,14 @@ private struct SSHExecutionResult {
 private enum RemoteSSHCommandRunner {
     private static let logger = Logger(subsystem: "com.wudanwu.pingisland", category: "RemoteSSH")
 
-    static func probe(target: String, password: String?) async throws -> RemoteHostProbe {
+    static func probe(target: String, port: Int, password: String?) async throws -> RemoteHostProbe {
         let command = #"printf "%s\n" "$USER" "$HOSTNAME" "$HOME"; uname -s; uname -m; command -v claude >/dev/null 2>&1 && echo "__PING_ISLAND_HAS_CLAUDE__=1" || echo "__PING_ISLAND_HAS_CLAUDE__=0"; command -v tmux >/dev/null 2>&1 && echo "__PING_ISLAND_HAS_TMUX__=1" || echo "__PING_ISLAND_HAS_TMUX__=0""#
         logger.notice(
-            "SSH probe starting target=\(target, privacy: .public) hasPassword=\(password != nil, privacy: .public)"
+            "SSH probe starting target=\(target, privacy: .public) port=\(port, privacy: .public) hasPassword=\(password != nil, privacy: .public)"
         )
         let result = try await runSSH(
             target: target,
+            port: port,
             password: password,
             remoteCommand: command,
             acceptNewHostKey: true
@@ -1683,9 +1757,9 @@ private enum RemoteSSHCommandRunner {
         guard lines.count >= 7 else {
             throw RemoteConnectorError.sshFailure("远程主机返回的信息不完整")
         }
-        let fingerprint = localKnownHostFingerprint(for: target)
+        let fingerprint = localKnownHostFingerprint(for: target, port: port)
         logger.notice(
-            "SSH probe completed target=\(target, privacy: .public) username=\(lines[0], privacy: .public) hostname=\(lines[1], privacy: .public) os=\(lines[3], privacy: .public) arch=\(lines[4], privacy: .public)"
+            "SSH probe completed target=\(target, privacy: .public) port=\(port, privacy: .public) username=\(lines[0], privacy: .public) hostname=\(lines[1], privacy: .public) os=\(lines[3], privacy: .public) arch=\(lines[4], privacy: .public)"
         )
         return RemoteHostProbe(
             username: lines[0],
@@ -1699,9 +1773,10 @@ private enum RemoteSSHCommandRunner {
         )
     }
 
-    static func readRemoteFile(target: String, remotePath: String, password: String?) async throws -> Data {
+    static func readRemoteFile(target: String, port: Int, remotePath: String, password: String?) async throws -> Data {
         let result = try await runSSH(
             target: target,
+            port: port,
             password: password,
             remoteCommand: "cat \(shellQuote(remotePath))",
             acceptNewHostKey: true
@@ -1729,22 +1804,23 @@ private enum RemoteSSHCommandRunner {
         throw RemoteConnectorError.sshFailure(detail.isEmpty ? "SSH 执行失败" : detail)
     }
 
-    static func writeRemoteFile(target: String, remotePath: String, contents: Data, password: String?) async throws {
+    static func writeRemoteFile(target: String, port: Int, remotePath: String, contents: Data, password: String?) async throws {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ping-island-remote-\(UUID().uuidString)")
         try contents.write(to: tempURL, options: .atomic)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        try await copyFile(localURL: tempURL, remoteTarget: target, remotePath: remotePath, password: password)
+        try await copyFile(localURL: tempURL, remoteTarget: target, port: port, remotePath: remotePath, password: password)
     }
 
-    static func copyFile(localURL: URL, remoteTarget: String, remotePath: String, password: String?) async throws {
+    static func copyFile(localURL: URL, remoteTarget: String, port: Int, remotePath: String, password: String?) async throws {
         logger.notice(
-            "SCP copy starting target=\(remoteTarget, privacy: .public) localPath=\(localURL.path, privacy: .public) remotePath=\(remotePath, privacy: .public) hasPassword=\(password != nil, privacy: .public)"
+            "SCP copy starting target=\(remoteTarget, privacy: .public) port=\(port, privacy: .public) localPath=\(localURL.path, privacy: .public) remotePath=\(remotePath, privacy: .public) hasPassword=\(password != nil, privacy: .public)"
         )
         let process = try makeSecureCopyProcess(
             localURL: localURL,
             remoteTarget: remoteTarget,
+            port: port,
             remotePath: remotePath,
             password: password
         )
@@ -1753,22 +1829,24 @@ private enum RemoteSSHCommandRunner {
             throw RemoteConnectorError.sshFailure(result.stderr.isEmpty ? "SCP 复制失败" : result.stderr)
         }
         logger.debug(
-            "SCP copy completed target=\(remoteTarget, privacy: .public) remotePath=\(remotePath, privacy: .public)"
+            "SCP copy completed target=\(remoteTarget, privacy: .public) port=\(port, privacy: .public) remotePath=\(remotePath, privacy: .public)"
         )
     }
 
     static func runSSH(
         target: String,
+        port: Int,
         password: String?,
         remoteCommand: String,
         acceptNewHostKey: Bool,
         allowFailure: Bool = false
     ) async throws -> SSHExecutionResult {
         logger.debug(
-            "SSH exec starting target=\(target, privacy: .public) hasPassword=\(password != nil, privacy: .public) acceptNewHostKey=\(acceptNewHostKey, privacy: .public) allowFailure=\(allowFailure, privacy: .public) command=\(excerpt(remoteCommand), privacy: .public)"
+            "SSH exec starting target=\(target, privacy: .public) port=\(port, privacy: .public) hasPassword=\(password != nil, privacy: .public) acceptNewHostKey=\(acceptNewHostKey, privacy: .public) allowFailure=\(allowFailure, privacy: .public) command=\(excerpt(remoteCommand), privacy: .public)"
         )
         let process = try makeSSHProcess(
             target: target,
+            port: port,
             password: password,
             remoteCommand: remoteCommand,
             acceptNewHostKey: acceptNewHostKey
@@ -1776,11 +1854,11 @@ private enum RemoteSSHCommandRunner {
         let result = try await run(process: process)
         if result.exitCode == 0 {
             logger.debug(
-                "SSH exec completed target=\(target, privacy: .public) exitCode=\(result.exitCode, privacy: .public) stdout=\(excerpt(result.stdout), privacy: .public) stderr=\(excerpt(result.stderr), privacy: .public)"
+                "SSH exec completed target=\(target, privacy: .public) port=\(port, privacy: .public) exitCode=\(result.exitCode, privacy: .public) stdout=\(excerpt(result.stdout), privacy: .public) stderr=\(excerpt(result.stderr), privacy: .public)"
             )
         } else {
             logger.error(
-                "SSH exec failed target=\(target, privacy: .public) exitCode=\(result.exitCode, privacy: .public) stdout=\(excerpt(result.stdout), privacy: .public) stderr=\(excerpt(result.stderr), privacy: .public)"
+                "SSH exec failed target=\(target, privacy: .public) port=\(port, privacy: .public) exitCode=\(result.exitCode, privacy: .public) stdout=\(excerpt(result.stdout), privacy: .public) stderr=\(excerpt(result.stderr), privacy: .public)"
             )
         }
         guard allowFailure || result.exitCode == 0 else {
@@ -1792,6 +1870,7 @@ private enum RemoteSSHCommandRunner {
 
     static func makeSSHProcess(
         target: String,
+        port: Int,
         password: String?,
         remoteCommand: String,
         acceptNewHostKey: Bool
@@ -1800,6 +1879,7 @@ private enum RemoteSSHCommandRunner {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = sshArguments(
             target: target,
+            port: port,
             password: password,
             remoteCommand: remoteCommand,
             acceptNewHostKey: acceptNewHostKey
@@ -1811,6 +1891,7 @@ private enum RemoteSSHCommandRunner {
     private static func makeSecureCopyProcess(
         localURL: URL,
         remoteTarget: String,
+        port: Int,
         remotePath: String,
         password: String?
     ) throws -> Process {
@@ -1819,6 +1900,7 @@ private enum RemoteSSHCommandRunner {
         process.arguments = scpArguments(
             localPath: localURL.path,
             remoteTarget: remoteTarget,
+            port: port,
             remotePath: remotePath,
             password: password
         )
@@ -1860,11 +1942,15 @@ private enum RemoteSSHCommandRunner {
 
     private static func sshArguments(
         target: String,
+        port: Int,
         password: String?,
         remoteCommand: String,
         acceptNewHostKey: Bool
     ) -> [String] {
         var arguments = commonSSHOptions(password: password, acceptNewHostKey: acceptNewHostKey)
+        if port != RemoteSSHLink.defaultPort {
+            arguments += ["-p", "\(port)"]
+        }
         arguments.append(target)
         arguments.append(remoteCommand)
         return arguments
@@ -1873,12 +1959,17 @@ private enum RemoteSSHCommandRunner {
     private static func scpArguments(
         localPath: String,
         remoteTarget: String,
+        port: Int,
         remotePath: String,
         password: String?
     ) -> [String] {
         var arguments = commonSSHOptions(password: password, acceptNewHostKey: true)
+        if port != RemoteSSHLink.defaultPort {
+            arguments += ["-P", "\(port)"]
+        }
         arguments.append(localPath)
-        arguments.append("\(remoteTarget):\(remotePath)")
+        let scpTarget = RemoteSSHLink(sshTarget: remoteTarget, explicitPort: port)?.secureCopyTarget ?? remoteTarget
+        arguments.append("\(scpTarget):\(remotePath)")
         return arguments
     }
 
@@ -1919,8 +2010,9 @@ private enum RemoteSSHCommandRunner {
         return environment
     }
 
-    private static func localKnownHostFingerprint(for target: String) -> String? {
-        let host = target.split(separator: "@").last.map(String.init) ?? target
+    private static func localKnownHostFingerprint(for target: String, port: Int) -> String? {
+        let host = RemoteSSHLink(sshTarget: target, explicitPort: port)?.knownHostsLookupTarget
+            ?? (target.split(separator: "@").last.map(String.init) ?? target)
         return ProcessExecutor.shared.runSyncOrNil(
             "/usr/bin/ssh-keygen",
             arguments: ["-F", host]

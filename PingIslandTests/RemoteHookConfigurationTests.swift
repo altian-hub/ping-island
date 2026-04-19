@@ -507,6 +507,46 @@ final class RemoteHookConfigurationTests: XCTestCase {
         )
     }
 
+    func testConnectionFailureDetailUsesStageSpecificMessage() {
+        XCTAssertEqual(
+            RemoteConnectorManager.connectionFailureDetail(for: "bootstrap-initial"),
+            "远程初始化失败"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.connectionFailureDetail(for: "probe"),
+            "远程主机检测失败"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.connectionFailureDetail(for: "attach"),
+            "远程连接失败"
+        )
+    }
+
+    func testPresentableConnectionErrorSummarizesHermesPluginDirectoryScpFailure() {
+        let error = """
+        /usr/bin/scp: dest open "/root/.hermes/plugins/ping_island/__init__.py": No such file or directory
+        /usr/bin/scp: failed to upload file /var/folders/example to /root/.hermes/plugins/ping_island/__init__.py
+        """
+
+        XCTAssertEqual(
+            RemoteConnectorManager.presentableConnectionError(
+                stage: "bootstrap-initial",
+                errorDescription: error
+            ),
+            "无法写入远程 Hermes 插件目录，请确认远程主目录可写后重试。"
+        )
+    }
+
+    func testPresentableConnectionErrorSummarizesPermissionDenied() {
+        XCTAssertEqual(
+            RemoteConnectorManager.presentableConnectionError(
+                stage: "probe",
+                errorDescription: "Permission denied, please try again."
+            ),
+            "SSH 认证失败，请重新输入密码或检查远程 SSH 凭据。"
+        )
+    }
+
     func testRemotePendingRequestStoreKeepsDuplicateRequestsForSameToolUseID() {
         let endpointID = UUID()
         let firstRequest = PendingRemoteRequest(

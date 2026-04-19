@@ -312,6 +312,41 @@ public struct BridgeResponse: Codable, Equatable, Sendable {
     }
 }
 
+public enum BridgeAnswerPayload {
+    public static func extractAnswers(from updatedInput: [String: JSONValue]?) -> [String: String] {
+        guard let rawAnswers = updatedInput?["answers"] else {
+            return [:]
+        }
+
+        if case .object(let answers) = rawAnswers {
+            return answers.reduce(into: [:]) { partial, pair in
+                switch pair.value {
+                case .string(let string):
+                    partial[pair.key] = string
+                case .array(let values):
+                    let strings = values.compactMap { value -> String? in
+                        guard case .string(let string) = value else { return nil }
+                        return string
+                    }
+                    if !strings.isEmpty {
+                        partial[pair.key] = strings.joined(separator: ", ")
+                    }
+                case .int(let value):
+                    partial[pair.key] = String(value)
+                case .double(let value):
+                    partial[pair.key] = String(value)
+                case .bool(let value):
+                    partial[pair.key] = String(value)
+                default:
+                    break
+                }
+            }
+        }
+
+        return [:]
+    }
+}
+
 public struct SessionSnapshot: Equatable, Sendable {
     public var sessions: [AgentSession]
     public var selectedSessionID: String?

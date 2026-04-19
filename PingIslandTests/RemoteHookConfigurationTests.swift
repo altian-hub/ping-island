@@ -540,4 +540,40 @@ final class RemoteHookConfigurationTests: XCTestCase {
 
         XCTAssertEqual(store.requests(for: "tool-1"), [survivingRequest])
     }
+
+    func testResolvedRemoteToolUseIDPreservesExplicitToolUseID() {
+        let requestID = UUID()
+
+        XCTAssertEqual(
+            RemoteConnectorManager.resolvedRemoteToolUseID(
+                toolUseID: "toolu_remote_123",
+                expectsResponse: true,
+                requestID: requestID
+            ),
+            "toolu_remote_123"
+        )
+    }
+
+    func testResolvedRemoteToolUseIDSynthesizesBridgeIDForResponseOnlyRequests() {
+        let requestID = UUID(uuidString: "12345678-1234-1234-1234-1234567890AB")!
+
+        XCTAssertEqual(
+            RemoteConnectorManager.resolvedRemoteToolUseID(
+                toolUseID: nil,
+                expectsResponse: true,
+                requestID: requestID
+            ),
+            "bridge-12345678-1234-1234-1234-1234567890AB"
+        )
+    }
+
+    func testResolvedRemoteToolUseIDDoesNotSynthesizeForFireAndForgetEvents() {
+        XCTAssertNil(
+            RemoteConnectorManager.resolvedRemoteToolUseID(
+                toolUseID: nil,
+                expectsResponse: false,
+                requestID: UUID()
+            )
+        )
+    }
 }

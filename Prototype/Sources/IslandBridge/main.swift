@@ -631,6 +631,10 @@ private final class RemoteAgentService: @unchecked Sendable {
         let message = RemoteHookEventMessage(type: "hook_event", payload: payload)
 
         if payload.expectsResponse {
+            guard controlClientSocket >= 0 else {
+                close(clientSocket)
+                return
+            }
             pendingRequests[payload.requestID] = PendingRemoteBridgeRequest(
                 requestID: payload.requestID,
                 sessionID: payload.sessionID,
@@ -669,6 +673,7 @@ private final class RemoteAgentService: @unchecked Sendable {
                 close(socket)
                 self?.controlClientSocket = -1
             }
+            self?.failOpenPendingRequests()
         }
         controlClientReadSource?.resume()
     }
@@ -721,6 +726,14 @@ private final class RemoteAgentService: @unchecked Sendable {
             write(pending.clientSocket, buffer.baseAddress, buffer.count)
         }
         close(pending.clientSocket)
+    }
+
+    private func failOpenPendingRequests() {
+        let pendingSockets = pendingRequests.values.map(\.clientSocket)
+        pendingRequests.removeAll()
+        for socket in pendingSockets {
+            close(socket)
+        }
     }
 
     private func sendHello() {
@@ -931,16 +944,7 @@ private enum RemoteBridgeMessageBuilder {
         case "cancel":
             return .cancel
         case "answer":
-            let answers = updatedInput?
-                .compactMapValues { value -> String? in
-                    switch value {
-                    case .string(let string):
-                        return string
-                    default:
-                        return nil
-                    }
-                } ?? [:]
-            return .answer(answers)
+            return .answer(BridgeAnswerPayload.extractAnswers(from: updatedInput))
         default:
             return nil
         }

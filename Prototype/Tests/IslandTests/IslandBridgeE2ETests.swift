@@ -170,3 +170,53 @@ func islandBridgeRoundTripsApprovalRequestsThroughSocketServer() async throws {
         }
     }
 }
+
+@Test
+func remoteAgentFailsOpenWhenNoControlClientIsAttached() async throws {
+    let executable = try TestRuntime.executableURL(named: "PingIslandBridge")
+    let socketID = UUID().uuidString.prefix(8)
+    let hookSocketPath = "/tmp/pi-\(socketID)-h.sock"
+    let controlSocketPath = "/tmp/pi-\(socketID)-c.sock"
+
+    let service = try RunningProcess(
+        executableURL: executable,
+        arguments: [
+            "--mode", "remote-agent-service",
+            "--hook-socket", hookSocketPath,
+            "--control-socket", controlSocketPath
+        ]
+    )
+    defer {
+        service.terminate()
+        _ = service.waitForExit()
+        try? FileManager.default.removeItem(atPath: hookSocketPath)
+        try? FileManager.default.removeItem(atPath: controlSocketPath)
+    }
+
+    try await waitUntil(description: "remote agent service should create sockets") {
+        FileManager.default.fileExists(atPath: hookSocketPath)
+            && FileManager.default.fileExists(atPath: controlSocketPath)
+    }
+
+    let response = try TestSocketClient.send(
+        envelope: BridgeEnvelope(
+            provider: .claude,
+            eventType: "PermissionRequest",
+            sessionKey: "claude:remote-skip",
+            title: "Bash",
+            preview: "Bash",
+            cwd: "/tmp/remote-skip",
+            status: SessionStatus(kind: .waitingForApproval),
+            expectsResponse: true,
+            metadata: [
+                "session_id": "remote-skip",
+                "tool_name": "Bash"
+            ]
+        ),
+        socketPath: hookSocketPath
+    )
+
+    #expect(response.decision == nil)
+    #expect(response.updatedInput == nil)
+    #expect(response.reason == nil)
+}

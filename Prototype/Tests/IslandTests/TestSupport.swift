@@ -173,6 +173,11 @@ final class RunningProcess {
         try? stdinPipe.fileHandleForWriting.close()
     }
 
+    func terminate() {
+        guard process.isRunning else { return }
+        process.terminate()
+    }
+
     func waitForExit() -> ProcessResult {
         process.waitUntilExit()
         let stdout = String(
@@ -226,6 +231,9 @@ enum TestSocketClient {
         shutdown(fd, Int32(SHUT_WR))
 
         let responseData = try readAll(from: fd)
+        if responseData.isEmpty {
+            return BridgeResponse(requestID: envelope.id)
+        }
         return try BridgeCodec.decodeResponse(responseData)
     }
 

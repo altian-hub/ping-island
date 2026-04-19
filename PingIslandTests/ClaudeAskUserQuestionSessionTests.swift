@@ -129,6 +129,65 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
         await store.process(.sessionArchived(sessionId: sessionId))
     }
 
+    func testRemoteBridgeHistoryLoadedQuestionToolDoesNotSynthesizesClaudeTranscriptIntervention() async {
+        let sessionId = "claude-remote-history-\(UUID().uuidString)"
+        let store = SessionStore.shared
+
+        await store.process(.hookReceived(makeRemoteClaudePromptSubmitEvent(sessionId: sessionId)))
+        await store.process(
+            .historyLoaded(
+                sessionId: sessionId,
+                messages: [
+                    ChatMessage(
+                        id: "assistant-tool-message",
+                        role: .assistant,
+                        timestamp: Date(),
+                        content: [
+                            .toolUse(
+                                ToolUseBlock(
+                                    id: "toolu_\(sessionId)",
+                                    name: "AskUserQuestion",
+                                    input: [
+                                        "questions": """
+                                        [
+                                          {
+                                            "id":"project",
+                                            "header":"方向",
+                                            "question":"你想先处理哪个模块？",
+                                            "options":[
+                                              {"label":"会话层"},
+                                              {"label":"UI 层"}
+                                            ]
+                                          }
+                                        ]
+                                        """
+                                    ]
+                                )
+                            )
+                        ]
+                    )
+                ],
+                completedTools: [],
+                toolResults: [:],
+                structuredResults: [:],
+                conversationInfo: ConversationInfo(
+                    summary: nil,
+                    lastMessage: nil,
+                    lastMessageRole: nil,
+                    lastToolName: nil,
+                    firstUserMessage: "使用工具问我一个问题",
+                    lastUserMessageDate: Date()
+                )
+            )
+        )
+
+        let session = await store.session(for: sessionId)
+        XCTAssertNil(session?.intervention)
+        XCTAssertNotEqual(session?.phase, .waitingForInput)
+
+        await store.process(.sessionArchived(sessionId: sessionId))
+    }
+
     private func makeClaudeQuestionEvent(sessionId: String) -> HookEvent {
         HookEvent(
             sessionId: sessionId,
@@ -255,6 +314,32 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
             toolUseId: nil,
             notificationType: nil,
             message: "使用工具问我一个问题"
+        )
+    }
+
+    private func makeRemoteClaudePromptSubmitEvent(sessionId: String) -> HookEvent {
+        HookEvent(
+            sessionId: sessionId,
+            cwd: "/tmp/project",
+            event: "UserPromptSubmit",
+            status: "processing",
+            provider: .claude,
+            clientInfo: SessionClientInfo(
+                kind: .claudeCode,
+                profileID: "claude_code",
+                name: "Claude Code",
+                bundleIdentifier: "com.anthropic.claudecode",
+                remoteHost: "remote.example",
+                sessionFilePath: "/tmp/\(sessionId).jsonl"
+            ),
+            pid: nil,
+            tty: nil,
+            tool: nil,
+            toolInput: nil,
+            toolUseId: nil,
+            notificationType: nil,
+            message: "使用工具问我一个问题",
+            ingress: .remoteBridge
         )
     }
 }

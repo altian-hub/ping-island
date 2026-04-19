@@ -402,6 +402,32 @@ func claudeQuestionAnswerPayloadPreservesFullUpdatedInputForPermissionRequests()
 }
 
 @Test
+func bridgeAnswerPayloadExtractsNestedAnswersForRemoteQuestionResponses() {
+    let extracted = BridgeAnswerPayload.extractAnswers(from: [
+        "questions": .array([
+            .object([
+                "id": .string("terminal_scope"),
+                "question": .string("Which terminal?")
+            ])
+        ]),
+        "answers": .object([
+            "Which terminal?": .string("iTerm2"),
+            "selection_index": .int(1),
+            "confirmed": .bool(true),
+            "choices": .array([
+                .string("iTerm2"),
+                .string("Terminal")
+            ])
+        ])
+    ])
+
+    #expect(extracted["Which terminal?"] == "iTerm2")
+    #expect(extracted["selection_index"] == "1")
+    #expect(extracted["confirmed"] == "true")
+    #expect(extracted["choices"] == "iTerm2, Terminal")
+}
+
+@Test
 func claudeUserInputAnswerPayloadPreservesFullUpdatedInput() throws {
     let response = BridgeResponse(
         requestID: UUID(),

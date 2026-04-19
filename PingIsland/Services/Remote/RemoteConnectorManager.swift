@@ -480,6 +480,11 @@ final class RemoteConnectorManager: ObservableObject {
             guard let provider = SessionProvider(rawValue: payload.provider) else {
                 return
             }
+            let resolvedToolUseID = Self.resolvedRemoteToolUseID(
+                toolUseID: payload.toolUseID,
+                expectsResponse: payload.expectsResponse,
+                requestID: payload.requestID
+            )
             let resolvedRemoteHost = Self.resolvedRemoteHostHint(
                 payloadRemoteHost: payload.clientInfo.remoteHost,
                 endpoint: endpoint(for: endpointID)
@@ -516,13 +521,13 @@ final class RemoteConnectorManager: ObservableObject {
                 tty: payload.tty,
                 tool: payload.tool,
                 toolInput: payload.toolInput?.mapValues { AnyCodable($0.foundationObject) },
-                toolUseId: payload.toolUseID,
+                toolUseId: resolvedToolUseID,
                 notificationType: payload.notificationType,
                 message: payload.message,
                 ingress: .remoteBridge
             )
 
-            if payload.expectsResponse, let toolUseID = payload.toolUseID {
+            if payload.expectsResponse, let toolUseID = resolvedToolUseID {
                 pendingRequests.append(PendingRemoteRequest(
                     endpointID: endpointID,
                     requestID: payload.requestID,
@@ -896,6 +901,22 @@ final class RemoteConnectorManager: ObservableObject {
         }
 
         return sanitizedNonEmpty(withoutUser)
+    }
+
+    nonisolated static func resolvedRemoteToolUseID(
+        toolUseID: String?,
+        expectsResponse: Bool,
+        requestID: UUID
+    ) -> String? {
+        if let toolUseID = sanitizedNonEmpty(toolUseID) {
+            return toolUseID
+        }
+
+        guard expectsResponse else {
+            return nil
+        }
+
+        return "bridge-\(requestID.uuidString)"
     }
 
     private func updateEndpoint(_ endpoint: RemoteEndpoint) {

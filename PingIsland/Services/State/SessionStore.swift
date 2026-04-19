@@ -2125,7 +2125,9 @@ actor SessionStore {
     }
 
     private func applyClaudeTranscriptQuestionFallback(to session: inout SessionState) {
-        guard session.provider == .claude, session.clientInfo.brand == .claude else { return }
+        guard session.provider == .claude,
+              session.clientInfo.brand == .claude,
+              session.ingress != .remoteBridge else { return }
 
         let fallbackSource = "claudeTranscriptQuestion"
         let currentSource = session.intervention?.metadata["source"]

@@ -20,6 +20,7 @@ struct IslandBridgeMain {
     private static let stdinFollowUpPollTimeoutMs = 10
 
     static func main() async {
+        Self.configureProcessSignalHandling()
         do {
             switch try parseMode(arguments: CommandLine.arguments) {
             case .hook:
@@ -69,6 +70,12 @@ struct IslandBridgeMain {
             FileHandle.standardError.write(Data("PingIslandBridge error: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
         }
+    }
+
+    private static func configureProcessSignalHandling() {
+        #if canImport(Glibc) || canImport(Musl)
+        _ = signal(SIGPIPE, SIG_IGN)
+        #endif
     }
 
     private static func parseMode(arguments: [String]) throws -> BridgeRuntimeMode {
@@ -310,6 +317,7 @@ private struct JSONStreamCompletionState {
             return false
         }
     }
+
 }
 
 private enum BridgeDebugLogger {

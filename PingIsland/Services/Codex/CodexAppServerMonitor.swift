@@ -550,7 +550,7 @@ actor CodexAppServerMonitor {
 
         case "item/tool/requestUserInput":
             guard let threadId = params["threadId"] as? String else { return }
-            let questions = parseQuestions(params["questions"] as? [[String: Any]] ?? [])
+            let questions = Self.parseQuestions(params["questions"] as? [[String: Any]] ?? [])
             let prompt = questions.first?.prompt ?? "Codex needs your input."
             let intervention = SessionIntervention(
                 id: id,
@@ -1075,7 +1075,7 @@ actor CodexAppServerMonitor {
         )
     }
 
-    private func parseQuestions(_ rawQuestions: [[String: Any]]) -> [SessionInterventionQuestion] {
+    nonisolated static func parseQuestions(_ rawQuestions: [[String: Any]]) -> [SessionInterventionQuestion] {
         rawQuestions.map { question in
             let options = (question["options"] as? [[String: Any]] ?? []).enumerated().map { index, option in
                 SessionInterventionOption(
@@ -1096,7 +1096,7 @@ actor CodexAppServerMonitor {
                     ?? question["multiSelect"] as? Bool
                     ?? question["multiple"] as? Bool
                     ?? false,
-                allowsOther: question["isOther"] as? Bool ?? false,
+                allowsOther: true,
                 isSecret: question["isSecret"] as? Bool ?? false
             )
         }

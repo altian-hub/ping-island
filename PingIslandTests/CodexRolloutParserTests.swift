@@ -110,6 +110,76 @@ final class CodexRolloutParserTests: XCTestCase {
         XCTAssertEqual(snapshot?.phase, .processing)
     }
 
+    func testRolloutParserSurfacesPendingRequestUserInputCall() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let threadId = "019dc0b1-1b2c-73d8-9d3d-9833ecfc7fb0"
+        let rolloutURL = tempDirectory.appendingPathComponent("rollout-\(threadId).jsonl")
+        let rollout = """
+        {"timestamp":"2026-04-24T17:59:20Z","type":"session_meta","payload":{"id":"\(threadId)","cwd":"/Users/ping-island/Island","originator":"Codex Desktop","source":"desktop"}}
+        {"timestamp":"2026-04-24T17:59:21Z","type":"event_msg","payload":{"type":"user_message","message":"build a small TodoList sample"}}
+        {"timestamp":"2026-04-24T17:59:27Z","type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call_question_1","arguments":"{\\"questions\\":[{\\"header\\":\\"Data\\",\\"id\\":\\"todo_data\\",\\"question\\":\\"TodoList 示例的数据要怎么处理？\\",\\"options\\":[{\\"label\\":\\"内存状态（推荐）\\",\\"description\\":\\"最适合作为简洁示例，刷新或重启后数据丢失。\\"},{\\"label\\":\\"UserDefaults 持久化\\",\\"description\\":\\"更接近可用小功能，但会多出存储和测试细节。\\"}]}]}"}}
+        """
+        try rollout.write(to: rolloutURL, atomically: true, encoding: .utf8)
+
+        let snapshot = await CodexRolloutParser.shared.parseThread(
+            threadId: threadId,
+            fallbackCwd: "/Users/ping-island/Island",
+            clientInfo: SessionClientInfo(
+                kind: .codexApp,
+                profileID: "codex-app",
+                name: "Codex App",
+                bundleIdentifier: "com.openai.codex",
+                sessionFilePath: rolloutURL.path
+            )
+        )
+
+        XCTAssertEqual(snapshot?.phase, .waitingForInput)
+        XCTAssertEqual(snapshot?.intervention?.kind, .question)
+        XCTAssertEqual(snapshot?.intervention?.metadata["source"], "codex_rollout_request_user_input")
+        XCTAssertEqual(snapshot?.intervention?.metadata["responseMode"], "external_only")
+        XCTAssertEqual(snapshot?.intervention?.resolvedQuestions.first?.prompt, "TodoList 示例的数据要怎么处理？")
+        XCTAssertEqual(snapshot?.intervention?.resolvedQuestions.first?.options.map(\.title), ["内存状态（推荐）", "UserDefaults 持久化"])
+        XCTAssertTrue(snapshot?.intervention?.resolvedQuestions.first?.allowsOther ?? false)
+    }
+
+    func testRolloutParserClearsRequestUserInputAfterOutput() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let threadId = "019dc0b1-1b2c-73d8-9d3d-9833ecfc7fb1"
+        let rolloutURL = tempDirectory.appendingPathComponent("rollout-\(threadId).jsonl")
+        let rollout = """
+        {"timestamp":"2026-04-24T17:59:20Z","type":"session_meta","payload":{"id":"\(threadId)","cwd":"/Users/ping-island/Island","originator":"Codex Desktop","source":"desktop"}}
+        {"timestamp":"2026-04-24T17:59:21Z","type":"event_msg","payload":{"type":"user_message","message":"build a small TodoList sample"}}
+        {"timestamp":"2026-04-24T17:59:27Z","type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call_question_1","arguments":"{\\"questions\\":[{\\"id\\":\\"todo_data\\",\\"question\\":\\"TodoList 示例的数据要怎么处理？\\",\\"options\\":[{\\"label\\":\\"内存状态（推荐)\\"}]}]}"}}
+        {"timestamp":"2026-04-24T17:59:40Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_question_1","output":"{\\"answers\\":{\\"todo_data\\":[\\"内存状态（推荐)\\"]}}"}}
+        {"timestamp":"2026-04-24T17:59:45Z","type":"event_msg","payload":{"type":"agent_message","phase":"final","message":"我会用内存状态实现这个示例。"}}
+        """
+        try rollout.write(to: rolloutURL, atomically: true, encoding: .utf8)
+
+        let snapshot = await CodexRolloutParser.shared.parseThread(
+            threadId: threadId,
+            fallbackCwd: "/Users/ping-island/Island",
+            clientInfo: SessionClientInfo(
+                kind: .codexApp,
+                profileID: "codex-app",
+                name: "Codex App",
+                bundleIdentifier: "com.openai.codex",
+                sessionFilePath: rolloutURL.path
+            )
+        )
+
+        XCTAssertNil(snapshot?.intervention)
+        XCTAssertEqual(snapshot?.phase, .idle)
+        XCTAssertEqual(snapshot?.latestResponseText, "我会用内存状态实现这个示例。")
+    }
+
     func testRolloutParserExtractsCodexSubagentMetadataFromSessionMeta() async throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

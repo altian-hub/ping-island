@@ -485,6 +485,90 @@ actor CodexRolloutParser {
         return nil
     }
 
+    private func codexUserInputIntervention(
+        callId: String,
+        toolName: String,
+        input: [String: Any]?
+    ) -> SessionIntervention? {
+        guard normalizedToolName(toolName) == "requestuserinput" else {
+            return nil
+        }
+
+        let questions = parseInterventionQuestions(input?["questions"] as? [[String: Any]] ?? [])
+        guard !questions.isEmpty else {
+            return nil
+        }
+
+        let prompt = questions.first?.prompt ?? "Codex needs your input."
+        var metadata: [String: String] = [
+            "source": "codex_rollout_request_user_input",
+            "responseMode": "external_only",
+            "toolName": toolName,
+            "toolUseId": callId
+        ]
+        if let input,
+           JSONSerialization.isValidJSONObject(input),
+           let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            metadata["toolInputJSON"] = json
+        }
+
+        return SessionIntervention(
+            id: callId,
+            kind: .question,
+            title: "Codex Needs Input",
+            message: prompt,
+            options: questions.first?.options ?? [],
+            questions: questions,
+            supportsSessionScope: false,
+            metadata: metadata
+        )
+    }
+
+    private func parseInterventionQuestions(_ rawQuestions: [[String: Any]]) -> [SessionInterventionQuestion] {
+        rawQuestions.enumerated().compactMap { index, question in
+            let prompt = stringValue(question["question"])
+                ?? stringValue(question["prompt"])
+                ?? stringValue(question["label"])
+            guard let prompt, !prompt.isEmpty else { return nil }
+
+            let objectOptions = (question["options"] as? [[String: Any]] ?? []).enumerated().compactMap { optionIndex, option -> SessionInterventionOption? in
+                guard let label = stringValue(option["label"]) ?? stringValue(option["title"]),
+                      !label.isEmpty else { return nil }
+                return SessionInterventionOption(
+                    id: stringValue(option["id"]) ?? label,
+                    title: label,
+                    detail: stringValue(option["description"])
+                )
+            }
+
+            let stringOptions = (question["options"] as? [String] ?? []).enumerated().map { optionIndex, label in
+                SessionInterventionOption(
+                    id: "\(index)-option-\(optionIndex)",
+                    title: label,
+                    detail: nil
+                )
+            }
+
+            return SessionInterventionQuestion(
+                id: stringValue(question["id"]) ?? prompt,
+                header: stringValue(question["header"]) ?? "\(index + 1).",
+                prompt: prompt,
+                detail: stringValue(question["description"]),
+                options: objectOptions.isEmpty ? stringOptions : objectOptions,
+                allowsMultiple: boolValue(question["isMultiple"])
+                    ?? boolValue(question["allowsMultiple"])
+                    ?? boolValue(question["multiSelect"])
+                    ?? boolValue(question["multiple"])
+                    ?? false,
+                allowsOther: true,
+                isSecret: boolValue(question["isSecret"])
+                    ?? boolValue(question["secret"])
+                    ?? false
+            )
+        }
+    }
+
     private func parseJSONStringDictionary(_ value: Any?) -> [String: String] {
         guard let object = parseJSONStringObject(value) else {
             return [:]

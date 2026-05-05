@@ -168,6 +168,34 @@ struct SessionClientInfo: Codable, Equatable, Sendable {
         inferredProfileID == "openclaw"
     }
 
+    nonisolated var supportsCustomAskUserQuestionInput: Bool {
+        let normalized = normalizedForClaudeRouting()
+        let profileIDs = [profileID, normalized.profileID]
+            .compactMap { value -> String? in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return trimmed?.isEmpty == false ? trimmed : nil
+            }
+
+        if kind == .codexCLI
+            || kind == .codexApp
+            || normalized.kind == .codexCLI
+            || normalized.kind == .codexApp {
+            return true
+        }
+
+        if profileIDs.contains("qoder-cli") {
+            return true
+        }
+
+        if profileIDs.contains("qoder") || profileIDs.contains("qoderwork") {
+            return false
+        }
+
+        return kind == .claudeCode
+            || normalized.kind == .claudeCode
+    }
+
+
     nonisolated var suppressesActivationNavigation: Bool {
         isOpenClawGatewayClient
     }

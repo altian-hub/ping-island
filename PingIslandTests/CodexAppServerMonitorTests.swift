@@ -57,4 +57,21 @@ final class CodexAppServerMonitorTests: XCTestCase {
         XCTAssertEqual(intervention.metadata["responseMode"], "external_only")
         XCTAssertEqual(intervention.metadata["source"], "guardian_review")
     }
+
+    func testCodexUserInputQuestionsDefaultToCustomInput() {
+        let questions = CodexAppServerMonitor.parseQuestions([
+            [
+                "id": "scope",
+                "header": "Scope",
+                "question": "Where should Codex focus?",
+                "options": [
+                    ["label": "Tests"],
+                    ["label": "UI"]
+                ]
+            ]
+        ])
+
+        XCTAssertEqual(questions.first?.options.map(\.title), ["Tests", "UI"])
+        XCTAssertTrue(questions.first?.allowsOther ?? false)
+    }
 }

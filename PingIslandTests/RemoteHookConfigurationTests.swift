@@ -36,9 +36,12 @@ final class RemoteHookConfigurationTests: XCTestCase {
 
         XCTAssertTrue(command.contains("mkdir -p '/root/.ping-island/run' '/root/.ping-island/logs'"))
         XCTAssertTrue(command.contains("if [ -S '/root/.ping-island/run/agent-control.sock' ] && pgrep -f '/root/.ping-island/bin/[P]ingIslandBridge --mode remote-agent-service' >/dev/null 2>&1; then"))
+        XCTAssertTrue(command.contains("Ping Island remote bridge is not installed at /root/.ping-island/bin"))
         XCTAssertTrue(command.contains("pkill -f '/root/.ping-island/bin/[P]ingIslandBridge --mode remote-agent-service' >/dev/null 2>&1 || true"))
         XCTAssertTrue(command.contains("rm -f '/root/.ping-island/run/agent-control.sock' '/root/.ping-island/run/agent-hook.sock'"))
         XCTAssertTrue(command.contains("nohup '/root/.ping-island/bin/ping-island-bridge' --mode remote-agent-service --hook-socket '/root/.ping-island/run/agent-hook.sock' --control-socket '/root/.ping-island/run/agent-control.sock' > '/root/.ping-island/logs/remote-agent.log' 2>&1 &"))
+        XCTAssertTrue(command.contains("Ping Island remote bridge failed to start"))
+        XCTAssertTrue(command.contains("tail -n 40 '/root/.ping-island/logs/remote-agent.log'"))
     }
 
     func testRemoteBootstrapUninstallCommandStopsBridgeAndRemovesInstallRoot() {
@@ -70,6 +73,14 @@ final class RemoteHookConfigurationTests: XCTestCase {
         XCTAssertEqual(
             RemoteConnectorManager.remoteLinuxBridgeArchiveAssetName(normalizedArchitecture: "x86_64"),
             "PingIslandBridge-linux-x86_64.zip"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.remoteLinuxBridgeLegacyBinaryAssetName(normalizedArchitecture: "x86_64"),
+            "PingIslandBridge-linux-x86_64"
+        )
+        XCTAssertEqual(
+            RemoteConnectorManager.remoteLinuxBridgeLegacyArchiveAssetName(normalizedArchitecture: "aarch64"),
+            "PingIslandBridge-linux-aarch64.zip"
         )
     }
 

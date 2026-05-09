@@ -314,9 +314,10 @@ struct NotchView: View {
                     .onTapGesture {
                         if viewModel.status != .opened {
                             viewModel.notchOpen(reason: .click)
-                        } else {
-                            viewModel.notchClose()
                         }
+                        // While opened, taps on the panel are handled by the
+                        // child controls (buttons, fields). Closing is via
+                        // cursor-leave or by clicking outside the panel rect.
                     }
             }
         }

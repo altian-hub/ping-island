@@ -135,6 +135,8 @@ class NotchViewModel: ObservableObject {
     private var hoverTimer: DispatchWorkItem?
     private var idleTimer: DispatchWorkItem?
     private let idleAutoCloseDelay: TimeInterval = 3.0
+    private var interactionLockCount: Int = 0
+    var hasInteractionLock: Bool { interactionLockCount > 0 }
     // Keep hover previews feeling responsive without making incidental cursor
     // passes over the notch expand it too aggressively.
     private let defaultHoverActivationDelay: TimeInterval = 0.24
@@ -278,6 +280,7 @@ class NotchViewModel: ObservableObject {
            status == .opened,
            openReason == .hover || openReason == .notification,
            !isSettingsPopoverPresented,
+           !hasInteractionLock,
            AppSettings.autoCollapseOnLeave {
             notchClose()
         }
@@ -415,9 +418,13 @@ class NotchViewModel: ObservableObject {
 
     private func startIdleTimer() {
         cancelIdleTimer()
-        guard !isSettingsPopoverPresented else { return }
+        guard !isSettingsPopoverPresented, !hasInteractionLock else { return }
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.status == .opened, !self.isHovering, !self.isSettingsPopoverPresented else { return }
+            guard let self,
+                  self.status == .opened,
+                  !self.isHovering,
+                  !self.isSettingsPopoverPresented,
+                  !self.hasInteractionLock else { return }
             self.notchClose()
         }
         idleTimer = workItem
@@ -427,6 +434,21 @@ class NotchViewModel: ObservableObject {
     private func cancelIdleTimer() {
         idleTimer?.cancel()
         idleTimer = nil
+    }
+
+    /// Pause auto-close (idle timer + collapse-on-leave) while the user is
+    /// mid-interaction with a panel form (e.g. an AskUserQuestion prompt).
+    /// Pair every begin with an end on view disappearance.
+    func beginInteractionLock() {
+        interactionLockCount += 1
+        cancelIdleTimer()
+    }
+
+    func endInteractionLock() {
+        interactionLockCount = max(0, interactionLockCount - 1)
+        if interactionLockCount == 0, status == .opened, !isHovering {
+            startIdleTimer()
+        }
     }
 
     func notchPop() {

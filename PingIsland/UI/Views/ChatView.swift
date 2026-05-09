@@ -455,6 +455,27 @@ struct ChatView: View {
     // MARK: - Question Form
 
     private func questionForm(_ intervention: SessionIntervention) -> some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            questionFormContent(intervention)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, intervention.metadata["responseMode"] == "external_only" ? 10 : 12)
+        .background(Color.black.opacity(0.2))
+        .overlay(alignment: .top) {
+            LinearGradient(
+                colors: [fadeColor.opacity(0), fadeColor.opacity(0.7)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 24)
+            .offset(y: -24)
+            .allowsHitTesting(false)
+        }
+        .zIndex(1)
+    }
+
+    @ViewBuilder
+    private func questionFormContent(_ intervention: SessionIntervention) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -517,6 +538,8 @@ struct ChatView: View {
                     secondaryActionTitle: session.isInTmux ? AppLocalization.string("Go to Terminal") : nil,
                     onSecondaryAction: session.isInTmux ? { focusTerminal() } : nil
                 )
+                .onAppear { viewModel.beginInteractionLock() }
+                .onDisappear { viewModel.endInteractionLock() }
             } else {
                 HStack(spacing: 8) {
                     Button {
@@ -549,20 +572,6 @@ struct ChatView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, intervention.metadata["responseMode"] == "external_only" ? 10 : 12)
-        .background(Color.black.opacity(0.2))
-        .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [fadeColor.opacity(0), fadeColor.opacity(0.7)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 24)
-            .offset(y: -24)
-            .allowsHitTesting(false)
-        }
-        .zIndex(1)
     }
 
     // MARK: - Autoscroll Management

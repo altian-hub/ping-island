@@ -143,6 +143,8 @@ struct CodexSessionView: View {
                         viewModel.exitChat()
                     }
                 )
+                .onAppear { viewModel.beginInteractionLock() }
+                .onDisappear { viewModel.endInteractionLock() }
             }
         }
     }

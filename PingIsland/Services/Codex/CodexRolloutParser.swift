@@ -193,7 +193,8 @@ actor CodexRolloutParser {
                 case "function_call":
                     guard let callId = stringValue(payload["call_id"]),
                           let name = stringValue(payload["name"]) else { continue }
-                    let input = parseJSONStringDictionary(payload["arguments"])
+                    let inputObject = parseJSONStringObject(payload["arguments"])
+                    let input = parseJSONStringDictionary(inputObject ?? payload["arguments"])
                     let item = ChatHistoryItem(
                         id: callId,
                         type: .toolCall(ToolCallItem(
@@ -208,7 +209,16 @@ actor CodexRolloutParser {
                     )
                     toolIndexes[callId] = historyItems.count
                     historyItems.append(item)
-                    phase = .processing
+                    if let questionIntervention = codexUserInputIntervention(
+                        callId: callId,
+                        toolName: name,
+                        input: inputObject
+                    ) {
+                        intervention = questionIntervention
+                        phase = .waitingForInput
+                    } else {
+                        phase = .processing
+                    }
 
                 case "custom_tool_call":
                     guard let callId = stringValue(payload["call_id"]),
@@ -264,6 +274,11 @@ actor CodexRolloutParser {
                         type: .toolCall(tool),
                         timestamp: historyItems[toolIndex].timestamp
                     )
+                    if intervention?.metadata["toolUseId"] == callId
+                        || intervention?.id == callId {
+                        intervention = nil
+                        phase = .processing
+                    }
 
                 case "custom_tool_call_output":
                     guard let callId = stringValue(payload["call_id"]),
@@ -292,7 +307,9 @@ actor CodexRolloutParser {
             }
         }
 
-        if historyItems.contains(where: Self.isRunningToolItem(_:)) {
+        if intervention?.kind == .question {
+            phase = .waitingForInput
+        } else if historyItems.contains(where: Self.isRunningToolItem(_:)) {
             phase = .processing
         } else if phase == .processing, latestFinalText != nil {
             phase = .idle
@@ -662,6 +679,35 @@ actor CodexRolloutParser {
         default:
             return nil
         }
+    }
+
+    private func boolValue(_ value: Any?) -> Bool? {
+        switch value {
+        case let bool as Bool:
+            return bool
+        case let number as NSNumber:
+            return number.boolValue
+        case let string as String:
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if ["true", "yes", "1"].contains(normalized) {
+                return true
+            }
+            if ["false", "no", "0"].contains(normalized) {
+                return false
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private func normalizedToolName(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
     }
 }
 

@@ -147,8 +147,8 @@ struct SessionListView: View {
     }
 
     private func selectSession(_ session: SessionState) {
-        guard selectedSessionStableID != session.stableId else { return }
-        selectedSessionStableID = session.stableId
+        // Selection state is only used by keyboard navigation (not picked here);
+        // keep this helper as a no-op so subagent click handlers compile.
     }
 
     private func interactionTargetSession(for session: SessionState) async -> SessionState {

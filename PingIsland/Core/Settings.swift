@@ -80,9 +80,9 @@ enum UsageValueMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .used:
-            return "已用量"
+            return "Used"
         case .remaining:
-            return "剩余量"
+            return "Remaining"
         }
     }
 }
@@ -121,18 +121,18 @@ enum SubagentVisibilityMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .hidden:
-            return "不显示"
+            return "Hide"
         case .visible:
-            return "显示"
+            return "Show"
         }
     }
 
     var subtitle: String {
         switch self {
         case .hidden:
-            return "主列表里隐藏所有子 Agent 消息项"
+            return "Hide subagent messages from the main list"
         case .visible:
-            return "主列表里展示所有子 Agent 消息项"
+            return "Show subagent messages in the main list"
         }
     }
 

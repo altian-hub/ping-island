@@ -876,15 +876,15 @@ private struct SettingsPanelContentView: View {
                 SettingsLineDivider()
 
                 SettingsToggleLine(
-                    title: "显示用量",
-                    subtitle: "在展开面板顶部显示 Claude 与 Codex 的限额占用率和重置时间",
+                    title: "Show usage",
+                    subtitle: "Show Claude and Codex quota usage and reset times above the expanded panel",
                     isOn: $settings.showUsage
                 )
                 SettingsLineDivider()
 
                 SettingsInfoLine(
-                    title: "用量显示方式",
-                    subtitle: "切换显示已用量或剩余量;Claude 与 Codex 共用这组设置"
+                    title: "Usage display mode",
+                    subtitle: "Show used or remaining quota. Applies to both Claude and Codex."
                 ) {
                     Picker("", selection: $settings.usageValueMode) {
                         ForEach(UsageValueMode.allCases) { candidate in
@@ -899,8 +899,8 @@ private struct SettingsPanelContentView: View {
                 SettingsLineDivider()
 
                 SettingsInfoLine(
-                    title: "子 Agent 显示",
-                    subtitle: "控制主列表里是否展示子 Agent 消息项;当前会影响 Codex、Qoder 等带子会话的客户端"
+                    title: "Subagent visibility",
+                    subtitle: "Control whether subagent messages appear in the main list. Affects Codex, Qoder, and other clients that spawn subagents."
                 ) {
                     SubagentVisibilityPicker(
                         mode: Binding(
@@ -1315,7 +1315,7 @@ private struct SettingsPanelContentView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(appLocalized: "添加远程主机后，Island 会通过 SSH 检查环境、安装远程 bridge，并配置 Claude hooks。")
                     Text(appLocalized: "连接成功后，远程会话会回传到本机显示；如果密码连接失败，需要重新输入密码。")
-                    Text(appLocalized: "如果不再需要远端集成，可在这里直接卸载 bridge；这会删除远端 `~/.ping-island` 并撤回 Island 托管的 hooks。")
+                    Text(appLocalized: "If you no longer need the remote integration, uninstall the bridge here. This removes `~/.ping-island` on the remote host and withdraws Island-managed hooks.")
                 }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white.opacity(0.72))
@@ -2196,7 +2196,7 @@ private struct RemoteHostManagementLine: View {
             HStack(spacing: 10) {
                 if runtimeState.phase == .connected {
                     HookManagementButton(
-                        title: "断开",
+                        title: "Disconnect",
                         tint: TerminalColors.amber,
                         isDisabled: isBusy
                     ) {
@@ -2218,7 +2218,7 @@ private struct RemoteHostManagementLine: View {
                 }
 
                 HookManagementButton(
-                    title: "卸载 bridge",
+                    title: "Uninstall bridge",
                     tint: TerminalColors.amber,
                     isLoading: isUninstalling,
                     isDisabled: isBusy
@@ -2231,7 +2231,7 @@ private struct RemoteHostManagementLine: View {
                 }
 
                 HookManagementButton(
-                    title: "删除",
+                    title: "Delete",
                     tint: TerminalColors.amber,
                     isDisabled: isBusy
                 ) {
@@ -2350,8 +2350,8 @@ private struct AddRemoteHostSheet: View {
 
                 VStack(alignment: .leading, spacing: 14) {
                 remoteField(title: "显示名称（可选）", placeholder: "例如 GPU Box", text: $displayName)
-                remoteField(title: "SSH 目标", placeholder: "例如 dev@10.0.0.8 或 my-server", text: $sshTarget)
-                remoteField(title: "端口", placeholder: "22", text: $sshPort)
+                remoteField(title: "SSH target", placeholder: "e.g. dev@10.0.0.8 or my-server", text: $sshTarget)
+                remoteField(title: "Port", placeholder: "22", text: $sshPort)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(appLocalized: "密码（可选）")
@@ -2380,7 +2380,7 @@ private struct AddRemoteHostSheet: View {
 
                 if sshPort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
                    parsedPort == nil {
-                    Text(appLocalized: "端口需为 1 到 65535")
+                    Text(appLocalized: "Port must be between 1 and 65535")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(TerminalColors.amber)
                 }
@@ -2474,18 +2474,18 @@ private enum RemotePasswordPromptAction: String {
     var titleFormat: String {
         switch self {
         case .connect:
-            return "连接 %@"
+            return "Connect to %@"
         case .uninstallBridge:
-            return "卸载 %@ 的 bridge"
+            return "Uninstall bridge on %@"
         }
     }
 
     var submitTitle: String {
         switch self {
         case .connect:
-            return "连接"
+            return "Connect"
         case .uninstallBridge:
-            return "卸载"
+            return "Uninstall"
         }
     }
 }
@@ -3069,7 +3069,7 @@ private struct SubagentVisibilityPicker: View {
             }
         }
         .labelsHidden()
-        .accessibilityLabel("子 Agent 显示")
+        .accessibilityLabel("Subagent visibility")
         .settingsMenuPicker(width: 168)
     }
 }

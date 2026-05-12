@@ -218,7 +218,7 @@ final class RemoteConnectorManager: ObservableObject {
         stopLocalConnection(
             endpointID: endpointID,
             updateState: true,
-            detail: "已断开远程转发连接"
+            detail: "Remote forwarding connection closed"
         )
     }
 
@@ -236,7 +236,7 @@ final class RemoteConnectorManager: ObservableObject {
         setState(
             for: endpointID,
             phase: .uninstalling,
-            detail: "正在卸载远程 bridge…",
+            detail: "Uninstalling remote bridge…",
             lastError: nil,
             requiresPassword: effectivePassword == nil && endpoint.authMode == .passwordSession
         )
@@ -268,7 +268,7 @@ final class RemoteConnectorManager: ObservableObject {
                     self.setState(
                         for: endpointID,
                         phase: .disconnected,
-                        detail: "远程 bridge 已卸载",
+                        detail: "Remote bridge uninstalled",
                         lastError: nil,
                         requiresPassword: false,
                         agentVersion: nil
@@ -292,7 +292,7 @@ final class RemoteConnectorManager: ObservableObject {
                     self.setState(
                         for: endpointID,
                         phase: .failed,
-                        detail: "远程卸载失败",
+                        detail: "Remote uninstall failed",
                         lastError: errorDescription,
                         requiresPassword: self.shouldRequirePasswordAfterConnectionFailure(
                             endpointID: endpointID,
@@ -424,7 +424,7 @@ final class RemoteConnectorManager: ObservableObject {
     private func stopLocalConnection(
         endpointID: UUID,
         updateState: Bool,
-        detail: String = "已断开远程转发连接"
+        detail: String = "Remote forwarding connection closed"
     ) {
         connectors.removeValue(forKey: endpointID)?.stop()
         pendingRequests.removeAll(for: endpointID)
@@ -1079,11 +1079,11 @@ final class RemoteConnectorManager: ObservableObject {
     nonisolated static func connectionFailureDetail(for stage: String) -> String {
         switch stage {
         case let stage where stage.hasPrefix("probe"):
-            return "远程主机检测失败"
+            return "Remote host probe failed"
         case let stage where stage.hasPrefix("bootstrap"):
-            return "远程初始化失败"
+            return "Remote bootstrap failed"
         default:
-            return "远程连接失败"
+            return "Remote connection failed"
         }
     }
 
@@ -1097,29 +1097,29 @@ final class RemoteConnectorManager: ObservableObject {
         let lowercased = normalized.lowercased()
 
         if lowercased.contains("permission denied") {
-            return "SSH 认证失败，请重新输入密码或检查远程 SSH 凭据。"
+            return "SSH authentication failed. Re-enter the password or check the remote SSH credentials."
         }
 
         if lowercased.contains("connection timed out") || lowercased.contains("operation timed out") {
-            return "SSH 连接超时，请检查远程主机地址、端口和网络连通性。"
+            return "SSH connection timed out. Check the remote host address, port, and network connectivity."
         }
 
         if lowercased.contains("connection refused") {
-            return "SSH 连接被拒绝，请确认远程 SSH 服务和端口配置。"
+            return "SSH connection refused. Verify the remote SSH service and port configuration."
         }
 
         if lowercased.contains("host key verification failed") {
-            return "SSH 主机指纹校验失败，请确认远程主机指纹后重新连接。"
+            return "SSH host key verification failed. Confirm the remote host fingerprint and reconnect."
         }
 
         if lowercased.contains(".hermes/plugins/ping_island") && lowercased.contains("no such file or directory") {
             return stage.hasPrefix("bootstrap")
-                ? "无法写入远程 Hermes 插件目录，请确认远程主目录可写后重试。"
-                : "远程 Hermes 插件目录不可用，暂时无法写入插件文件。"
+                ? "Cannot write to the remote Hermes plugin directory. Confirm the remote home directory is writable and try again."
+                : "Remote Hermes plugin directory unavailable; cannot write plugin files right now."
         }
 
         if lowercased.contains("dest open") && lowercased.contains("no such file or directory") {
-            return "远程目标目录不存在，无法写入初始化文件。"
+            return "Remote destination directory does not exist; cannot write initialization files."
         }
 
         if let firstLine = normalized.split(separator: "\n", omittingEmptySubsequences: true).first {
@@ -1782,7 +1782,7 @@ private enum RemoteSSHCommandRunner {
         }
 
         let detail = result.stderr.isEmpty ? result.stdout : result.stderr
-        throw RemoteConnectorError.sshFailure(detail.isEmpty ? "SSH 执行失败" : detail)
+        throw RemoteConnectorError.sshFailure(detail.isEmpty ? "SSH command failed" : detail)
     }
 
     static func writeRemoteFile(target: String, port: Int, remotePath: String, contents: Data, password: String?) async throws {
@@ -1844,7 +1844,7 @@ private enum RemoteSSHCommandRunner {
         }
         guard allowFailure || result.exitCode == 0 else {
             let detail = result.stderr.isEmpty ? result.stdout : result.stderr
-            throw RemoteConnectorError.sshFailure(detail.isEmpty ? "SSH 执行失败" : detail)
+            throw RemoteConnectorError.sshFailure(detail.isEmpty ? "SSH command failed" : detail)
         }
         return result
     }

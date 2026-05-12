@@ -58,7 +58,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
     }
 
     func testRemoteUninstallPhaseUsesDedicatedTitle() {
-        XCTAssertEqual(RemoteEndpointConnectionPhase.uninstalling.titleKey, "卸载中")
+        XCTAssertEqual(RemoteEndpointConnectionPhase.uninstalling.titleKey, "Uninstalling")
     }
 
     func testRemoteLinuxBridgeAssetNamesPreferZipArchiveDownload() {
@@ -510,15 +510,15 @@ final class RemoteHookConfigurationTests: XCTestCase {
     func testConnectionFailureDetailUsesStageSpecificMessage() {
         XCTAssertEqual(
             RemoteConnectorManager.connectionFailureDetail(for: "bootstrap-initial"),
-            "远程初始化失败"
+            "Remote bootstrap failed"
         )
         XCTAssertEqual(
             RemoteConnectorManager.connectionFailureDetail(for: "probe"),
-            "远程主机检测失败"
+            "Remote host probe failed"
         )
         XCTAssertEqual(
             RemoteConnectorManager.connectionFailureDetail(for: "attach"),
-            "远程连接失败"
+            "Remote connection failed"
         )
     }
 
@@ -533,7 +533,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
                 stage: "bootstrap-initial",
                 errorDescription: error
             ),
-            "无法写入远程 Hermes 插件目录，请确认远程主目录可写后重试。"
+            "Cannot write to the remote Hermes plugin directory. Confirm the remote home directory is writable and try again."
         )
     }
 
@@ -543,7 +543,7 @@ final class RemoteHookConfigurationTests: XCTestCase {
                 stage: "probe",
                 errorDescription: "Permission denied, please try again."
             ),
-            "SSH 认证失败，请重新输入密码或检查远程 SSH 凭据。"
+            "SSH authentication failed. Re-enter the password or check the remote SSH credentials."
         )
     }
 

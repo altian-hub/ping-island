@@ -9,6 +9,18 @@ import Combine
 import SwiftUI
 import os.log
 
+/// Natural inner height of the chat transcript (LazyVStack pre-frame), used to
+/// hug the panel tightly around short conversations when a question form is
+/// shown beneath. Local to ChatView — distinct from the cross-view
+/// OpenedChatContentHeightPreferenceKey that drives panel sizing.
+struct ChatTranscriptNaturalHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct ChatView: View {
     let sessionId: String
     let initialSession: SessionState
@@ -25,6 +37,7 @@ struct ChatView: View {
     @State private var newMessageCount: Int = 0
     @State private var previousHistoryCount: Int = 0
     @State private var isBottomVisible: Bool = true
+    @State private var measuredTranscriptHeight: CGFloat = 0
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: SessionMonitor, viewModel: NotchViewModel) {
@@ -194,6 +207,9 @@ struct ChatView: View {
                 }
             }
         }
+        .onPreferenceChange(ChatTranscriptNaturalHeightPreferenceKey.self) { height in
+            measuredTranscriptHeight = height
+        }
     }
 
     // MARK: - Header
@@ -341,9 +357,25 @@ struct ChatView: View {
                     }
                     .padding(.top, shouldTopAlignMessages ? 10 : 20)
                     .padding(.bottom, shouldTopAlignMessages ? 12 : 20)
+                    .background(
+                        // Publish the transcript's natural content height so the
+                        // panel can hug it tightly when the conversation above an
+                        // active question is short, instead of always reserving
+                        // the full compactTranscriptMaxHeight.
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ChatTranscriptNaturalHeightPreferenceKey.self,
+                                value: geo.size.height
+                            )
+                        }
+                    )
                     .frame(
                         maxWidth: .infinity,
-                        minHeight: geometry.size.height,
+                        // Skip the fill-available minHeight while a question is
+                        // active — let the LazyVStack take its natural inner
+                        // height so the parent's maxHeight cap (compactTranscriptMaxHeight)
+                        // hugs the actual transcript.
+                        minHeight: shouldTopAlignMessages ? nil : geometry.size.height,
                         // The scroll view is vertically flipped below. `.top` keeps sparse
                         // chats visually anchored near the footer, while `.bottom` moves
                         // intervention reminders upward so they don't leave a large blank area.
@@ -474,6 +506,12 @@ struct ChatView: View {
         .zIndex(1)
     }
 
+    /// Space taken by the chat header + section paddings when a question
+    /// intervention is active. The transcript area is added on top of this
+    /// using its measured natural height, so the panel can hug a short
+    /// conversation tightly instead of always reserving the full cap.
+    private static let questionChromeHeight: CGFloat = 52 + 24
+
     @ViewBuilder
     private func questionFormContent(_ intervention: SessionIntervention) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -572,6 +610,22 @@ struct ChatView: View {
                 }
             }
         }
+        .background(
+            // Report the form's natural height plus the chrome (header + paddings)
+            // plus the transcript's measured natural height (capped at its visual
+            // max) so the panel can grow past maxPanelHeight and render the full
+            // question inside its hit rect, while still hugging short transcripts.
+            GeometryReader { geo in
+                let transcript = min(
+                    measuredTranscriptHeight,
+                    compactTranscriptMaxHeight ?? measuredTranscriptHeight
+                )
+                Color.clear.preference(
+                    key: OpenedChatContentHeightPreferenceKey.self,
+                    value: geo.size.height + Self.questionChromeHeight + transcript
+                )
+            }
+        )
     }
 
     // MARK: - Autoscroll Management

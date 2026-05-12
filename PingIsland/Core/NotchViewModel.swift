@@ -44,6 +44,7 @@ class NotchViewModel: ObservableObject {
     @Published var contentType: NotchContentType = .instances
     @Published var isHovering: Bool = false
     @Published private(set) var openedMeasuredHeight: CGFloat?
+    @Published private(set) var chatNaturalHeight: CGFloat?
     @Published private(set) var isFullscreenEdgeRevealActive = false
     @Published private(set) var isFullscreenPhysicalNotchCompactActive = false
     @Published private(set) var isSettingsPopoverPresented = false
@@ -90,11 +91,16 @@ class NotchViewModel: ObservableObject {
 
         switch contentType {
         case .chat:
-            // Large size for chat view
-            return CGSize(
-                width: min(screenRect.width - 64, 600),
-                height: maxAllowedHeight
-            )
+            let width = min(screenRect.width - 64, 600)
+            // When chat content reports a natural height (e.g. an AskUserQuestion
+            // form sized to its full contents), let the panel grow past the user's
+            // maxPanelHeight cap so the whole question is visible and clickable.
+            if let naturalHeight = chatNaturalHeight {
+                let upperBound = min(geometry.windowHeight - 12, screenRect.height - 80)
+                let target = min(upperBound, max(maxAllowedHeight, naturalHeight))
+                return CGSize(width: width, height: target)
+            }
+            return CGSize(width: width, height: maxAllowedHeight)
         case .instances:
             let fallbackHeight: CGFloat = openReason == .hover ? 180 : 200
             let measuredHeight = openedMeasuredHeight ?? fallbackHeight
@@ -412,6 +418,7 @@ class NotchViewModel: ObservableObject {
         status = .closed
         contentType = .instances
         openedMeasuredHeight = nil
+        chatNaturalHeight = nil
     }
 
     // MARK: - Idle Auto-Close
@@ -473,6 +480,7 @@ class NotchViewModel: ObservableObject {
         if case .chat(let current) = contentType, current == session {
             return
         }
+        chatNaturalHeight = nil
         contentType = .chat(session)
     }
 
@@ -488,6 +496,7 @@ class NotchViewModel: ObservableObject {
         currentChatSession = nil
         contentType = .instances
         openedMeasuredHeight = nil
+        chatNaturalHeight = nil
     }
 
     func updateOpenedMeasuredHeight(_ height: CGFloat?) {
@@ -495,6 +504,13 @@ class NotchViewModel: ObservableObject {
 
         guard sanitized != openedMeasuredHeight else { return }
         openedMeasuredHeight = sanitized
+    }
+
+    func updateChatNaturalHeight(_ height: CGFloat?) {
+        let sanitized = height.map { max(closedHeight, ceil($0)) }
+
+        guard sanitized != chatNaturalHeight else { return }
+        chatNaturalHeight = sanitized
     }
 
     func setManualAttentionActive(_ isActive: Bool) {

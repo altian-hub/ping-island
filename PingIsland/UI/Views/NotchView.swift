@@ -27,6 +27,18 @@ struct OpenedPanelContentHeightPreferenceKey: PreferenceKey {
     }
 }
 
+/// Natural total height reported by a chat-mode content view. When set, the
+/// notch panel grows past the user's maxPanelHeight cap so an AskUserQuestion
+/// form (or other tall chat content) renders inside the panel rect — letting
+/// the hit-test stay aligned with what the user sees.
+struct OpenedChatContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct NotchView: View {
     private static let temporaryReminderMuteDuration: TimeInterval = 10 * 60
 
@@ -391,6 +403,13 @@ struct NotchView: View {
             } else {
                 viewModel.updateOpenedMeasuredHeight(nil)
             }
+        }
+        .onPreferenceChange(OpenedChatContentHeightPreferenceKey.self) { height in
+            guard viewModel.status == .opened, case .chat = viewModel.contentType else {
+                viewModel.updateChatNaturalHeight(nil)
+                return
+            }
+            viewModel.updateChatNaturalHeight(height > 0 ? height : nil)
         }
     }
 

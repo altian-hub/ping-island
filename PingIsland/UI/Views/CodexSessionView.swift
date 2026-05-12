@@ -22,6 +22,17 @@ struct CodexSessionView: View {
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
+            .background(
+                // When the codex view contains an active intervention (e.g. a
+                // question form), publish its natural height so the panel can
+                // expand to fit it instead of forcing the user to scroll.
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: OpenedChatContentHeightPreferenceKey.self,
+                        value: session.intervention?.kind == .question ? geo.size.height + 40 : 0
+                    )
+                }
+            )
         }
     }
 

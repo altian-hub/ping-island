@@ -875,6 +875,29 @@ private struct SettingsPanelContentView: View {
                 )
                 SettingsLineDivider()
 
+                SettingsToggleLine(
+                    title: "显示用量",
+                    subtitle: "在展开面板顶部显示 Claude 与 Codex 的限额占用率和重置时间",
+                    isOn: $settings.showUsage
+                )
+                SettingsLineDivider()
+
+                SettingsInfoLine(
+                    title: "用量显示方式",
+                    subtitle: "切换显示已用量或剩余量;Claude 与 Codex 共用这组设置"
+                ) {
+                    Picker("", selection: $settings.usageValueMode) {
+                        ForEach(UsageValueMode.allCases) { candidate in
+                            Text(candidate.title).tag(candidate)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 140)
+                    .disabled(!settings.showUsage)
+                }
+                SettingsLineDivider()
+
                 SettingsSliderLine(
                     title: "内容字号",
                     subtitle: "调整会话列表、hover 预览和结果视图的文字大小",

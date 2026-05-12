@@ -14,10 +14,13 @@ import Foundation
 class SessionMonitor: ObservableObject {
     @Published var instances: [SessionState] = []
     @Published var pendingInstances: [SessionState] = []
+    @Published private(set) var claudeUsageSnapshot: ClaudeUsageSnapshot?
+    @Published private(set) var codexUsageSnapshot: CodexUsageSnapshot?
 
     private var cancellables = Set<AnyCancellable>()
     private var hasStarted = false
     private var allSessions: [SessionState] = []
+    private var usageRefreshTask: Task<Void, Never>?
 
     init() {
         SessionStore.shared.sessionsPublisher
@@ -31,6 +34,7 @@ class SessionMonitor: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 self?.refreshVisibleSessions()
+                self?.refreshUsageState()
                 Task {
                     await SessionStore.shared.process(
                         .pruneTimedOutExternalContinuations(now: Date())
@@ -40,6 +44,29 @@ class SessionMonitor: ObservableObject {
             .store(in: &cancellables)
 
         InterruptWatcherManager.shared.delegate = self
+
+        refreshUsageState()
+    }
+
+    func refreshUsageState() {
+        usageRefreshTask?.cancel()
+        usageRefreshTask = Task { [weak self] in
+            guard let self else { return }
+
+            let claudeSnapshot = await Task.detached(priority: .utility) {
+                try? ClaudeUsageLoader.load()
+            }.value
+
+            let codexSnapshot = await Task.detached(priority: .utility) {
+                try? CodexUsageLoader.load()
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.claudeUsageSnapshot = claudeSnapshot
+                self.codexUsageSnapshot = codexSnapshot
+            }
+        }
     }
 
     // MARK: - Monitoring Lifecycle
@@ -180,6 +207,8 @@ class SessionMonitor: ObservableObject {
 
     func stopMonitoring() {
         hasStarted = false
+        usageRefreshTask?.cancel()
+        usageRefreshTask = nil
         HookSocketServer.shared.stop()
         RemoteConnectorManager.shared.stop()
         Task {

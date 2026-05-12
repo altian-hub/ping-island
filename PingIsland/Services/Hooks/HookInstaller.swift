@@ -156,6 +156,7 @@ struct HookInstaller {
     private static let firstLaunchDefaultsKey = "HookInstaller.isFirstLaunch.v1"
     private static let supportDirectoryName = ".ping-island"
     private static let bridgeLauncherName = "ping-island-bridge"
+    private static let statusLineScriptName = "island-statusline"
     private static let bridgeBinaryName = "PingIslandBridge"
     private static let legacyBridgeBinaryName = "IslandBridge"
 
@@ -517,6 +518,7 @@ struct HookInstaller {
         )
 
         installBridgeBinaryIfNeeded(in: binDirectory)
+        installStatusLineScript(in: binDirectory)
 
         guard !FileManager.default.fileExists(atPath: launcherURL.path) else {
             return
@@ -555,6 +557,23 @@ struct HookInstaller {
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: launcherURL.path
+        )
+    }
+
+    private static func installStatusLineScript(in binDirectory: URL) {
+        let scriptURL = binDirectory.appendingPathComponent(statusLineScriptName)
+        let script = """
+        #!/bin/bash
+        input=$(cat)
+        _rl=$(echo "$input" | jq -c '.rate_limits // empty' 2>/dev/null)
+        [ -n "$_rl" ] && printf '%s\\n' "$_rl" > /tmp/island-rate-limits.json
+        echo "$input" | jq -r 'if .model.display_name then "[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context" else empty end' 2>/dev/null
+        """
+
+        try? Data(script.utf8).write(to: scriptURL, options: .atomic)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
         )
     }
 

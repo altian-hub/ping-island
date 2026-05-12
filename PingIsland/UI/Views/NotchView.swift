@@ -593,50 +593,78 @@ struct NotchView: View {
 
     @ViewBuilder
     private var contentView: some View {
-        Group {
-            switch viewModel.contentType {
-            case .instances:
-                if viewModel.openReason == .notification,
-                   let notification = activeCompletionNotification {
-                    SessionCompletionNotificationView(
-                        notification: notification,
-                        onHoverChanged: handleCompletionNotificationHover,
-                        onDismiss: {
-                            clearCompletionNotifications(keepPanelOpen: true)
-                        }
-                    )
-                } else if viewModel.openReason == .hover {
-                    SessionHoverDashboardView(
-                        sessions: sortedHoverSessions,
-                        sessionMonitor: sessionMonitor
-                    )
-                } else {
-                    SessionListView(
-                        sessionMonitor: sessionMonitor,
-                        viewModel: viewModel
-                    )
-                }
-            case .chat(let session):
-                let liveSession = sessionMonitor.instances.first(where: { $0.sessionId == session.sessionId }) ?? session
+        VStack(spacing: 8) {
+            if shouldShowUsageSummary {
+                UsageSummaryStripView(providers: usageProviders)
+            }
+            Group {
+                switch viewModel.contentType {
+                case .instances:
+                    if viewModel.openReason == .notification,
+                       let notification = activeCompletionNotification {
+                        SessionCompletionNotificationView(
+                            notification: notification,
+                            onHoverChanged: handleCompletionNotificationHover,
+                            onDismiss: {
+                                clearCompletionNotifications(keepPanelOpen: true)
+                            }
+                        )
+                    } else if viewModel.openReason == .hover {
+                        SessionHoverDashboardView(
+                            sessions: sortedHoverSessions,
+                            sessionMonitor: sessionMonitor
+                        )
+                    } else {
+                        SessionListView(
+                            sessionMonitor: sessionMonitor,
+                            viewModel: viewModel
+                        )
+                    }
+                case .chat(let session):
+                    let liveSession = sessionMonitor.instances.first(where: { $0.sessionId == session.sessionId }) ?? session
 
-                if liveSession.provider == .claude {
-                    ChatView(
-                        sessionId: liveSession.sessionId,
-                        initialSession: liveSession,
-                        sessionMonitor: sessionMonitor,
-                        viewModel: viewModel
-                    )
-                } else {
-                    CodexSessionView(
-                        session: liveSession,
-                        sessionMonitor: sessionMonitor,
-                        viewModel: viewModel
-                    )
+                    if liveSession.provider == .claude {
+                        ChatView(
+                            sessionId: liveSession.sessionId,
+                            initialSession: liveSession,
+                            sessionMonitor: sessionMonitor,
+                            viewModel: viewModel
+                        )
+                    } else {
+                        CodexSessionView(
+                            session: liveSession,
+                            sessionMonitor: sessionMonitor,
+                            viewModel: viewModel
+                        )
+                    }
                 }
             }
         }
         .frame(width: notchSize.width - 24) // Fixed width to prevent text reflow
-        // Removed .id() - was causing view recreation and performance issues
+        .onAppear {
+            sessionMonitor.refreshUsageState()
+        }
+    }
+
+    private var usageProviders: [UsageSummaryProvider] {
+        UsageSummaryPresenter.providers(
+            claudeSnapshot: sessionMonitor.claudeUsageSnapshot,
+            codexSnapshot: sessionMonitor.codexUsageSnapshot,
+            mode: settings.usageValueMode
+        )
+    }
+
+    private var shouldShowUsageSummary: Bool {
+        guard settings.showUsage, !usageProviders.isEmpty else {
+            return false
+        }
+        // Suppress the strip when the panel is hosting a notification-only view.
+        if viewModel.openReason == .notification,
+           viewModel.contentType == .instances,
+           activeCompletionNotification != nil {
+            return false
+        }
+        return true
     }
 
     // MARK: - Event Handlers

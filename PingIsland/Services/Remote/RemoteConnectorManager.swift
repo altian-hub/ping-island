@@ -853,20 +853,6 @@ final class RemoteConnectorManager: ObservableObject {
                     )
                 }
 
-            case .pluginDirectory:
-                let remoteDirectoryPath = Self.remoteConfigurationPath(
-                    relativePath: profile.configurationRelativePaths[0],
-                    homeDirectory: probe.homeDirectory
-                )
-                _ = try await RemoteSSHCommandRunner.runSSH(
-                    target: endpoint.sshTarget,
-                    port: endpoint.sshPort,
-                    password: password,
-                    remoteCommand: "rm -rf \(quoted(remoteDirectoryPath))",
-                    acceptNewHostKey: true,
-                    allowFailure: true
-                )
-
             case .pluginFile:
                 continue
             }
@@ -1082,7 +1068,7 @@ final class RemoteConnectorManager: ObservableObject {
         defaults.set(data, forKey: persistenceKey)
     }
 
-    private static func sanitizedNonEmpty(_ value: String?) -> String? {
+    nonisolated private static func sanitizedNonEmpty(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else {
             return nil
@@ -1366,11 +1352,6 @@ final class RemoteConnectorManager: ObservableObject {
             paths = [configurationPath, NSString(string: configurationPath).deletingLastPathComponent]
         case .jsonHooks, .pluginFile:
             paths = [NSString(string: configurationPath).deletingLastPathComponent]
-        case .pluginDirectory:
-            paths = [
-                NSString(string: configurationPath).deletingLastPathComponent,
-                configurationPath
-            ]
         }
 
         if let activationRelativePath = profile.activationConfigurationRelativePath {

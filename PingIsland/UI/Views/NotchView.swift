@@ -580,6 +580,8 @@ struct NotchView: View {
                 helpText: temporaryMuteButtonHelpText
             )
 
+            NotchDetachToBuddyButton(action: switchToFloatingBuddy)
+
             NotchSettingsButton(
                 hasUnseenUpdate: updateManager.hasUnseenUpdate,
                 action: openSettingsWindow
@@ -1207,6 +1209,11 @@ struct NotchView: View {
         SettingsWindowController.shared.present()
     }
 
+    private func switchToFloatingBuddy() {
+        viewModel.notchClose()
+        AppSettings.surfaceMode = .floatingPet
+    }
+
     private func activateTemporaryReminderMute() {
         if areReminderNotificationsSuppressed {
             AppSettings.clearReminderNotificationMute()
@@ -1272,6 +1279,34 @@ private struct NotchSettingsButton: View {
         }
         .buttonStyle(.plain)
         .help("设置")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+private struct NotchDetachToBuddyButton: View {
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "pip.exit")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isHovering ? Color.black : Color.white.opacity(0.92))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isHovering ? Color.white.opacity(0.95) : Color.white.opacity(0.1))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Detach to Floating Buddy")
+        .accessibilityLabel("Detach to Floating Buddy")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovering = hovering

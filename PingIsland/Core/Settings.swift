@@ -112,6 +112,36 @@ enum NotchDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum IslandSurfaceMode: String, CaseIterable, Identifiable {
+    case notch
+    case floatingPet
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .notch:
+            return "Top Island"
+        case .floatingPet:
+            return "Floating Buddy"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .notch:
+            return "Keep Island centered at the top of the screen."
+        case .floatingPet:
+            return "Show a draggable Buddy you can place anywhere on screen."
+        }
+    }
+}
+
+struct FloatingPetAnchor: Codable, Equatable {
+    let xRatio: Double
+    let yRatio: Double
+}
+
 enum SubagentVisibilityMode: String, CaseIterable, Identifiable {
     case hidden
     case visible
@@ -257,6 +287,8 @@ final class AppSettingsStore: ObservableObject {
         static let notchPetStyle = "notchPetStyle"
         static let notchDisplayMode = "notchDisplayMode"
         static let mascotOverrides = "mascotOverrides"
+        static let surfaceMode = "surfaceMode"
+        static let floatingPetAnchor = "floatingPetAnchor"
     }
 
     // MARK: - Published Settings
@@ -504,6 +536,25 @@ final class AppSettingsStore: ObservableObject {
         }
     }
 
+    @Published var surfaceMode: IslandSurfaceMode {
+        didSet {
+            guard !isBootstrapping else { return }
+            defaults.set(surfaceMode.rawValue, forKey: Keys.surfaceMode)
+        }
+    }
+
+    @Published var floatingPetAnchor: FloatingPetAnchor? {
+        didSet {
+            guard !isBootstrapping else { return }
+            if let value = floatingPetAnchor,
+               let data = try? JSONEncoder().encode(value) {
+                defaults.set(data, forKey: Keys.floatingPetAnchor)
+            } else {
+                defaults.removeObject(forKey: Keys.floatingPetAnchor)
+            }
+        }
+    }
+
     @Published var mascotOverrides: [String: String] {
         didSet {
             let sanitized = Self.sanitizedMascotOverrides(mascotOverrides)
@@ -605,6 +656,14 @@ final class AppSettingsStore: ObservableObject {
             defaults.object(forKey: Keys.temporarilyMuteNotificationsUntil) as? Double
         let notchPetStyleRaw = defaults.string(forKey: Keys.notchPetStyle)
         let notchDisplayModeRaw = defaults.string(forKey: Keys.notchDisplayMode)
+        let surfaceModeRaw = defaults.string(forKey: Keys.surfaceMode)
+        let floatingPetAnchorData = defaults.data(forKey: Keys.floatingPetAnchor)
+        let floatingPetAnchorInitial: FloatingPetAnchor?
+        if let floatingPetAnchorData {
+            floatingPetAnchorInitial = try? JSONDecoder().decode(FloatingPetAnchor.self, from: floatingPetAnchorData)
+        } else {
+            floatingPetAnchorInitial = nil
+        }
         let mascotOverrideRaw = defaults.dictionary(forKey: Keys.mascotOverrides) as? [String: String] ?? [:]
         let temporarilyMuteNotificationsUntil = temporarilyMuteNotificationsUntilTimestamp.map {
             Date(timeIntervalSince1970: $0)
@@ -659,6 +718,8 @@ final class AppSettingsStore: ObservableObject {
         _maxPanelHeight = Published(initialValue: defaults.object(forKey: Keys.maxPanelHeight) as? Double ?? 580)
         _notchPetStyle = Published(initialValue: NotchPetStyle(rawValue: notchPetStyleRaw ?? "") ?? .cat)
         _notchDisplayMode = Published(initialValue: NotchDisplayMode(rawValue: notchDisplayModeRaw ?? "") ?? .compact)
+        _surfaceMode = Published(initialValue: IslandSurfaceMode(rawValue: surfaceModeRaw ?? "") ?? .notch)
+        _floatingPetAnchor = Published(initialValue: floatingPetAnchorInitial)
         _mascotOverrides = Published(initialValue: Self.sanitizedMascotOverrides(mascotOverrideRaw))
 
         if defaults.string(forKey: Keys.soundThemeMode) == nil {
@@ -793,6 +854,16 @@ enum AppSettings {
     static var notchDisplayMode: NotchDisplayMode {
         get { shared.notchDisplayMode }
         set { shared.notchDisplayMode = newValue }
+    }
+
+    static var surfaceMode: IslandSurfaceMode {
+        get { shared.surfaceMode }
+        set { shared.surfaceMode = newValue }
+    }
+
+    static var floatingPetAnchor: FloatingPetAnchor? {
+        get { shared.floatingPetAnchor }
+        set { shared.floatingPetAnchor = newValue }
     }
 
     static func mascotKind(for client: MascotClient) -> MascotKind {

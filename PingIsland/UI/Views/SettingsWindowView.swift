@@ -932,6 +932,21 @@ private struct SettingsPanelContentView: View {
                 SettingsLineDivider()
 
                 NotchDisplayModeSelector(mode: $settings.notchDisplayMode)
+                SettingsLineDivider()
+
+                SettingsInfoLine(
+                    title: "Presentation mode",
+                    subtitle: "Switch between the docked Top Island and a draggable Floating Buddy."
+                ) {
+                    Picker("", selection: $settings.surfaceMode) {
+                        ForEach(IslandSurfaceMode.allCases) { candidate in
+                            Text(candidate.title).tag(candidate)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 160)
+                }
             }
 
             SettingsSectionCard(title: "客户端形象") {

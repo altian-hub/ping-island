@@ -61,6 +61,18 @@ struct FloatingPetView: View {
                 }
         }
         .padding(4)
+        .onChange(of: attentionCount) { _, newValue in
+            // Auto-expand when a session newly needs attention (permission
+            // request, AskUserQuestion, etc.) so the user doesn't have to
+            // click the bubble to see what changed.
+            if newValue > 0, !isExpanded {
+                isExpanded = true
+            }
+        }
+    }
+
+    private var attentionCount: Int {
+        sessionMonitorState.monitor.instances.filter { $0.needsManualAttention }.count
     }
 
     private var mascotBubble: some View {
@@ -187,41 +199,80 @@ final class DragRelayView: NSView {
 /// Content displayed when the user clicks the Buddy.
 struct FloatingPetContent: View {
     @ObservedObject var viewModel: NotchViewModel
-    let sessionMonitor: SessionMonitor
+    @ObservedObject var sessionMonitor: SessionMonitor
     let onRedock: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Buddy")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.92))
-                Spacer()
-                Button(action: onRedock) {
-                    Image(systemName: "rectangle.dock")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.78))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.white.opacity(0.1))
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("Redock to top island")
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
+            // Only show our own header when we're on the session list. ChatView /
+            // CodexSessionView render their own back-arrow header, so we hide ours
+            // there to avoid stacking two of them.
+            if !isInChat {
+                HStack(spacing: 8) {
+                    Text("Buddy")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                        .lineLimit(1)
 
-            SessionListView(
-                sessionMonitor: sessionMonitor,
-                viewModel: viewModel
-            )
-            .frame(maxWidth: .infinity)
+                    Spacer()
+
+                    Button(action: onRedock) {
+                        Image(systemName: "rectangle.dock")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.78))
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.white.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Redock to top island")
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+            }
+
+            content
+                .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .background(Color.black)
         .preferredColorScheme(.dark)
+    }
+
+    private var isInChat: Bool {
+        if case .chat = viewModel.contentType { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch viewModel.contentType {
+        case .instances:
+            SessionListView(
+                sessionMonitor: sessionMonitor,
+                viewModel: viewModel
+            )
+        case .chat(let session):
+            let liveSession = sessionMonitor.instances.first(where: { $0.sessionId == session.sessionId }) ?? session
+            if liveSession.provider == .claude {
+                ChatView(
+                    sessionId: liveSession.sessionId,
+                    initialSession: liveSession,
+                    sessionMonitor: sessionMonitor,
+                    viewModel: viewModel
+                )
+                .frame(minHeight: 320)
+            } else {
+                CodexSessionView(
+                    session: liveSession,
+                    sessionMonitor: sessionMonitor,
+                    viewModel: viewModel
+                )
+                .frame(minHeight: 320)
+            }
+        }
     }
 }

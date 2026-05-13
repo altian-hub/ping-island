@@ -226,10 +226,9 @@ struct ChatView: View {
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.6))
                     .frame(width: 24, height: 24)
 
-                Text(session.titleOnlySubagentDisplayTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
+                chatHeaderTitle
                     .lineLimit(1)
+                    .opacity(isHeaderHovered ? 1.0 : 0.92)
 
                 Spacer()
             }
@@ -256,6 +255,30 @@ struct ChatView: View {
             .allowsHitTesting(false)
         }
         .zIndex(1) // Render above message list
+    }
+
+    /// Title styled to match the session list rows: "project · session title"
+    /// with the project prefix slightly smaller/lighter than the session title.
+    private var chatHeaderTitle: Text {
+        let baseSize = CGFloat(AppSettings.contentFontSize)
+        let projectSize = max(11, baseSize - 1)
+        let titleSize = max(12, baseSize + 1)
+
+        if session.usesTitleOnlySubagentPresentation || session.shouldHideProjectContextInUI {
+            return Text(session.titleOnlySubagentDisplayTitle)
+                .font(.system(size: titleSize, weight: .bold))
+                .foregroundColor(.white)
+        }
+
+        return Text(session.projectName)
+            .font(.system(size: projectSize, weight: .semibold))
+            .foregroundColor(.white.opacity(0.84))
+        + Text(" · ")
+            .font(.system(size: projectSize, weight: .bold))
+            .foregroundColor(.white.opacity(0.34))
+        + Text(session.displayTitle)
+            .font(.system(size: titleSize, weight: .bold))
+            .foregroundColor(.white)
     }
 
     /// Whether the session is currently processing

@@ -419,12 +419,6 @@ struct NotchView: View {
         activityCoordinator.expandingActivity.show && activityCoordinator.expandingActivity.type == .claude
     }
 
-    private var sortedHoverSessions: [SessionState] {
-        sessionMonitor.instances
-            .filter(\.presentsActiveInUI)
-            .sorted { $0.shouldSortBeforeInQueue($1) }
-    }
-
     /// Whether to show the expanded closed state (processing, pending permission, or waiting for input)
     private var showClosedActivity: Bool {
         isProcessing || hasPendingPermission || hasHumanIntervention || hasCompletedReadyState
@@ -572,7 +566,13 @@ struct NotchView: View {
                 .padding(.leading, 14)
             }
 
-            Spacer()
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: closedNotchSize.height)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    viewModel.notchClose()
+                }
+                .help("Click to collapse")
 
             NotchTemporaryMuteButton(
                 isActive: areReminderNotificationsSuppressed,
@@ -610,11 +610,6 @@ struct NotchView: View {
                             onDismiss: {
                                 clearCompletionNotifications(keepPanelOpen: true)
                             }
-                        )
-                    } else if viewModel.openReason == .hover {
-                        SessionHoverDashboardView(
-                            sessions: sortedHoverSessions,
-                            sessionMonitor: sessionMonitor
                         )
                     } else {
                         SessionListView(
@@ -765,6 +760,11 @@ struct NotchView: View {
             .first
 
         if let targetSession {
+            if shouldDeferAutoSwitch(to: targetSession, instances: instances) {
+                // User is mid-answer in a different session. Don't steal focus,
+                // and don't mark these IDs as seen so we retry once they finish.
+                return
+            }
             if viewModel.status != .opened {
                 viewModel.notchOpen(reason: .notification)
             }
@@ -772,6 +772,17 @@ struct NotchView: View {
         }
 
         previousApprovalIds = currentApprovalIds
+    }
+
+    /// True when the panel is showing a chat for a different session that still
+    /// has an unanswered question/approval. Used to defer auto-switching while
+    /// the user is composing a response.
+    private func shouldDeferAutoSwitch(to target: SessionState, instances: [SessionState]) -> Bool {
+        guard case .chat(let focused) = viewModel.contentType,
+              focused.stableId != target.stableId,
+              let liveFocused = instances.first(where: { $0.stableId == focused.stableId })
+        else { return false }
+        return liveFocused.needsQuestionResponse || liveFocused.needsApprovalResponse
     }
 
     private func handleQuestionInterventionChange(_ instances: [SessionState]) {
@@ -825,6 +836,11 @@ struct NotchView: View {
             .first
 
         if let targetSession {
+            if shouldDeferAutoSwitch(to: targetSession, instances: instances) {
+                // User is mid-answer in a different session. Don't steal focus,
+                // and don't mark these IDs as seen so we retry once they finish.
+                return
+            }
             if viewModel.status == .opened {
                 viewModel.notchClose()
                 DispatchQueue.main.async {

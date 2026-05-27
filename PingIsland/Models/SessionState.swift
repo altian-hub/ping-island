@@ -393,33 +393,15 @@ struct SessionState: Equatable, Identifiable, Sendable {
     }
 
     /// Claudian (Obsidian plugin) spawns a fresh `claude` process per command, so
-    /// every prompt becomes its own session. It marks its working directory by
-    /// dropping a `.claudian` folder in the vault root, so we walk up the cwd
-    /// looking for that marker. Hide those entirely until we have a proper
-    /// rollup story for plugin-spawned sessions.
+    /// every prompt becomes its own session. We only match by bundle identifier
+    /// here — walking the cwd for `.claudian` swept up legitimate Claude Code
+    /// sessions that happened to run inside an Obsidian vault subdirectory.
     nonisolated var isHostedInClaudian: Bool {
         let bundleCandidates: [String?] = [
             clientInfo.bundleIdentifier,
             clientInfo.terminalBundleIdentifier
         ]
-        if bundleCandidates.contains(where: { $0?.lowercased() == "md.obsidian" }) {
-            return true
-        }
-
-        guard !cwd.isEmpty else { return false }
-        let fileManager = FileManager.default
-        var directory = URL(fileURLWithPath: cwd, isDirectory: true)
-        for _ in 0..<10 {
-            let marker = directory.appendingPathComponent(".claudian", isDirectory: true).path
-            var isDir: ObjCBool = false
-            if fileManager.fileExists(atPath: marker, isDirectory: &isDir), isDir.boolValue {
-                return true
-            }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
-        }
-        return false
+        return bundleCandidates.contains { $0?.lowercased() == "md.obsidian" }
     }
 
     /// Codex placeholder sessions can be created before a richer thread record is available.

@@ -385,7 +385,35 @@ struct SessionState: Equatable, Identifiable, Sendable {
             return true
         }
 
-        return isLikelyEmptyCodexPlaceholderForUI
+        if isLikelyEmptyCodexPlaceholderForUI {
+            return true
+        }
+
+        return isLikelyEmptyClaudePlaceholderForUI
+    }
+
+    /// Claude Code 2.1.x fires multiple SessionStart hooks per `claude` invocation —
+    /// the main session plus a handful of helper sessions that advertise a
+    /// transcript path but never get written to. They show up as ghost rows with
+    /// no content. Detect by: claude provider, no chat/intervention/conversation
+    /// content, transcript_path present in clientInfo.sessionFilePath, and the
+    /// file on disk is missing or zero bytes.
+    nonisolated var isLikelyEmptyClaudePlaceholderForUI: Bool {
+        guard provider == .claude else { return false }
+        // The Claude Code 2.1.x prewarm/swarm fires SessionStart + PreToolUse hooks for
+        // helper session_ids that never persist a rollout file. PI populates chatItems,
+        // intervention, and conversationInfo from those hooks, so any in-memory field
+        // is unreliable as a "real session" signal. The only ground-truth indicator is
+        // the rollout file on disk: real claude sessions always write mode and
+        // permission-mode entries within milliseconds of starting. Treat any claude
+        // session whose advertised transcript_path is missing or has a zero-byte
+        // rollout file as a phantom.
+        guard let path = clientInfo.sessionFilePath, !path.isEmpty else {
+            return true
+        }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        return size == 0
     }
 
     /// Codex placeholder sessions can be created before a richer thread record is available.

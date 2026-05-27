@@ -2590,6 +2590,16 @@ actor SessionStore {
     private func updatePersistedAssociationIfNeeded(from session: SessionState) -> Bool {
         ensurePersistedAssociationsLoaded()
         let key = SessionAssociationStore.cacheKey(provider: session.provider, sessionId: session.sessionId)
+        // Don't persist phantom Claude swarm/prewarm sessions: they advertise a
+        // transcript_path but never write a rollout. Persisting them inflates the cache
+        // (hundreds per hour on an active Claude user) and the entries are useless
+        // because they can never be rehydrated into a real session.
+        if session.isLikelyEmptyClaudePlaceholderForUI {
+            if persistedAssociations.removeValue(forKey: key) != nil {
+                return true
+            }
+            return false
+        }
         let updatedAssociation = PersistedSessionAssociation(session: session)
         guard persistedAssociations[key] != updatedAssociation else {
             return false

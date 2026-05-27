@@ -144,6 +144,9 @@ actor SessionStore {
         case .sessionArchived(let sessionId):
             await archiveSession(sessionId: sessionId)
 
+        case .cleanDeadSessions:
+            await cleanDeadSessions()
+
         case .loadHistory(let sessionId, let cwd):
             await loadHistoryFromFile(sessionId: sessionId, cwd: cwd)
 
@@ -1434,6 +1437,56 @@ actor SessionStore {
         cancelPendingCodexPlaceholderPrune(sessionId: resolvedSessionId)
         cancelPendingQoderConversationPoll(sessionId: resolvedSessionId)
         scheduleFinalSessionSync(for: session)
+    }
+
+    /// Sweep dead sessions: anything whose advertised transcript file is missing
+    /// or zero bytes (no real rollout was ever written). This catches Claude
+    /// swarm/prewarm phantoms plus any other stale entries left behind on disk.
+    private func cleanDeadSessions() async {
+        let deadInMemory = sessions.values
+            .filter(Self.sessionIsDead(_:))
+            .map(\.sessionId)
+        for sessionId in deadInMemory {
+            sessions.removeValue(forKey: sessionId)
+            clearCodexSessionAliases(for: sessionId)
+            cancelPendingSync(sessionId: sessionId)
+            cancelPendingCodexPlaceholderPrune(sessionId: sessionId)
+            cancelPendingQoderConversationPoll(sessionId: sessionId)
+        }
+
+        ensurePersistedAssociationsLoaded()
+        var prunedFromCache = false
+        for (key, association) in persistedAssociations {
+            guard Self.associationIsDead(association) else { continue }
+            persistedAssociations.removeValue(forKey: key)
+            prunedFromCache = true
+        }
+        if prunedFromCache {
+            scheduleAssociationSave()
+        }
+
+        Self.logger.notice("Cleaned dead sessions: memory=\(deadInMemory.count, privacy: .public) cache=\(prunedFromCache ? "yes" : "no", privacy: .public)")
+        publishState()
+    }
+
+    private nonisolated static func sessionIsDead(_ session: SessionState) -> Bool {
+        guard let path = session.clientInfo.sessionFilePath, !path.isEmpty else {
+            return session.provider == .claude
+        }
+        return rolloutFileMissingOrEmpty(atPath: path)
+    }
+
+    private nonisolated static func associationIsDead(_ association: PersistedSessionAssociation) -> Bool {
+        guard let path = association.clientInfo.sessionFilePath, !path.isEmpty else {
+            return association.provider == .claude
+        }
+        return rolloutFileMissingOrEmpty(atPath: path)
+    }
+
+    private nonisolated static func rolloutFileMissingOrEmpty(atPath path: String) -> Bool {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        return size == 0
     }
 
     private func archiveSession(sessionId: String) async {

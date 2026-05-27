@@ -82,6 +82,9 @@ enum SessionEvent: Sendable {
     /// User explicitly archived a session from the UI
     case sessionArchived(sessionId: String)
 
+    /// User requested a sweep of dead sessions (no rollout on disk) from the UI
+    case cleanDeadSessions
+
     /// Request to load initial history from file
     case loadHistory(sessionId: String, cwd: String)
 
@@ -419,6 +422,8 @@ extension SessionEvent: CustomStringConvertible {
             return "sessionEnded(session: \(sessionId.prefix(8)))"
         case .sessionArchived(let sessionId):
             return "sessionArchived(session: \(sessionId.prefix(8)))"
+        case .cleanDeadSessions:
+            return "cleanDeadSessions"
         case .loadHistory(let sessionId, _):
             return "loadHistory(session: \(sessionId.prefix(8)))"
         case .historyLoaded(let sessionId, let messages, _, _, _, _):
@@ -478,6 +483,8 @@ extension SessionEvent {
             return "sessionEnded"
         case .sessionArchived:
             return "sessionArchived"
+        case .cleanDeadSessions:
+            return "cleanDeadSessions"
         case .loadHistory:
             return "loadHistory"
         case .historyLoaded:
@@ -511,7 +518,7 @@ extension SessionEvent {
             return String(sessionId.prefix(8))
         case .fileUpdated(let payload):
             return String(payload.sessionId.prefix(8))
-        case .pruneTimedOutExternalContinuations:
+        case .pruneTimedOutExternalContinuations, .cleanDeadSessions:
             return nil
         }
     }

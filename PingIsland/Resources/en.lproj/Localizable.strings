@@ -68,8 +68,9 @@
 
 "通知" = "Notifications";
 "启用提示音" = "Enable sounds";
-"10 分钟静音通知和声音" = "Mute notifications and sounds for 10 minutes";
-"通知与声音已静音至 %@，点击恢复" = "Notifications and sounds are muted until %@. Click to restore.";
+"10 分钟静音通知和声音" = "Mute notifications and sounds";
+"通知与声音已静音至 %@，点击恢复" = "Notifications and sounds are muted. Click to restore.";
+"系统专注模式开启，通知与声音已静音" = "System Focus is on; notifications and sounds are muted.";
 "已静音至 %@" = "Muted until %@";
 "不同阶段可分别播放不同音效，适用于 Claude、Codex 等会话。" = "Play different sounds for different phases across Claude, Codex, and other sessions.";
 "声音模式" = "Sound mode";

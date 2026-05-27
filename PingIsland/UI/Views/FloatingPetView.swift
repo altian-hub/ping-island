@@ -27,6 +27,12 @@ struct FloatingPetView: View {
     @State private var dragStartOrigin: NSPoint = .zero
     @State private var dragStartMouse: NSPoint = .zero
     @State private var isDragging = false
+    @State private var lastBubbleToggleAt: Date = .distantPast
+
+    /// Minimum time between bubble taps. Without this a double-click on the
+    /// companion would open then immediately close the panel before the user
+    /// can see what they opened.
+    private static let bubbleToggleDebounce: TimeInterval = 1.0
 
     private let popoverAutoHideDelay: TimeInterval = 5.0
 
@@ -51,7 +57,12 @@ struct FloatingPetView: View {
                 .onHover { isHovering = $0 }
                 .background(WindowReader { dragWindow = $0 })
                 .gesture(dragGesture)
-                .onTapGesture { isExpanded.toggle() }
+                .onTapGesture {
+                    let now = Date()
+                    guard now.timeIntervalSince(lastBubbleToggleAt) >= Self.bubbleToggleDebounce else { return }
+                    lastBubbleToggleAt = now
+                    isExpanded.toggle()
+                }
                 .popover(isPresented: $isExpanded, arrowEdge: .leading) {
                     FloatingPetContent(
                         viewModel: viewModel,
@@ -284,7 +295,20 @@ private struct WindowReader: NSViewRepresentable {
 struct FloatingPetContent: View {
     @ObservedObject var viewModel: NotchViewModel
     @ObservedObject var sessionMonitor: SessionMonitor
+    @ObservedObject private var settings = AppSettings.shared
     let onRedock: () -> Void
+
+    private var areReminderNotificationsSuppressed: Bool {
+        settings.areNotificationsMutedTemporarily
+    }
+
+    private func toggleTemporaryMute() {
+        if areReminderNotificationsSuppressed {
+            AppSettings.clearReminderNotificationMute()
+        } else {
+            AppSettings.muteReminderNotificationsIndefinitely()
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -299,6 +323,36 @@ struct FloatingPetContent: View {
                         .lineLimit(1)
 
                     Spacer()
+
+                    Button(action: toggleTemporaryMute) {
+                        Image(systemName: areReminderNotificationsSuppressed ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white.opacity(areReminderNotificationsSuppressed ? 0.6 : 0.78))
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.white.opacity(areReminderNotificationsSuppressed ? 0.06 : 0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(areReminderNotificationsSuppressed
+                          ? "Notifications and sounds are muted. Click to restore."
+                          : "Mute notifications and sounds")
+                    .accessibilityLabel(areReminderNotificationsSuppressed ? "Unmute notifications" : "Mute notifications")
+
+                    Button(action: { sessionMonitor.cleanDeadSessions() }) {
+                        Image(systemName: "trash.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.78))
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.white.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clean dead sessions (no rollout on disk)")
+                    .accessibilityLabel("Clean dead sessions")
 
                     Button(action: onRedock) {
                         Image(systemName: "rectangle.dock")

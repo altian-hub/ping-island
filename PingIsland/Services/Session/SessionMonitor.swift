@@ -407,6 +407,12 @@ class SessionMonitor: ObservableObject {
         }
     }
 
+    func cleanDeadSessions() {
+        Task {
+            await SessionStore.shared.process(.cleanDeadSessions)
+        }
+    }
+
     // MARK: - State Update
 
     private func updateFromSessions(_ sessions: [SessionState]) {

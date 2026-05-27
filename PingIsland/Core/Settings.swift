@@ -828,6 +828,12 @@ enum AppSettings {
         shared.muteNotifications(for: duration, now: now)
     }
 
+    /// Mute indefinitely — the UI exposes this as the only mute action. The mute
+    /// is cleared by `clearReminderNotificationMute()`.
+    static func muteReminderNotificationsIndefinitely() {
+        shared.temporarilyMuteNotificationsUntil = .distantFuture
+    }
+
     static func clearReminderNotificationMute() {
         shared.temporarilyMuteNotificationsUntil = nil
     }

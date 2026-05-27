@@ -40,8 +40,6 @@ struct OpenedChatContentHeightPreferenceKey: PreferenceKey {
 }
 
 struct NotchView: View {
-    private static let temporaryReminderMuteDuration: TimeInterval = 10 * 60
-
     @ObservedObject var viewModel: NotchViewModel
     @StateObject private var sessionMonitor = SessionMonitor()
     @StateObject private var activityCoordinator = NotchActivityCoordinator.shared
@@ -583,6 +581,8 @@ struct NotchView: View {
                 action: activateTemporaryReminderMute,
                 helpText: temporaryMuteButtonHelpText
             )
+
+            NotchCleanDeadSessionsButton(action: cleanDeadSessions)
 
             NotchDetachToBuddyButton(action: switchToFloatingBuddy)
 
@@ -1234,11 +1234,15 @@ struct NotchView: View {
         AppSettings.surfaceMode = .floatingPet
     }
 
+    private func cleanDeadSessions() {
+        sessionMonitor.cleanDeadSessions()
+    }
+
     private func activateTemporaryReminderMute() {
         if areReminderNotificationsSuppressed {
             AppSettings.clearReminderNotificationMute()
         } else {
-            AppSettings.muteReminderNotifications(for: Self.temporaryReminderMuteDuration)
+            AppSettings.muteReminderNotificationsIndefinitely()
             clearCompletionNotifications(keepPanelOpen: true)
 
             if viewModel.openReason == .notification {
@@ -1298,7 +1302,8 @@ private struct NotchSettingsButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("设置")
+        .help("Settings")
+        .accessibilityLabel("Settings")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovering = hovering
@@ -1387,6 +1392,34 @@ private struct NotchTemporaryMuteButton: View {
             return Color.white.opacity(isHovering ? 0.22 : 0.12)
         }
         return .clear
+    }
+}
+
+private struct NotchCleanDeadSessionsButton: View {
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "trash.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isHovering ? Color.black : Color.white.opacity(0.92))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isHovering ? Color.white.opacity(0.95) : Color.white.opacity(0.1))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Clean dead sessions (no rollout on disk)")
+        .accessibilityLabel("Clean dead sessions")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
     }
 }
 

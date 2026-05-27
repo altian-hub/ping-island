@@ -385,23 +385,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
             return true
         }
 
-        if isHostedInClaudian {
-            return true
-        }
-
         return isLikelyEmptyCodexPlaceholderForUI
-    }
-
-    /// Claudian (Obsidian plugin) spawns a fresh `claude` process per command, so
-    /// every prompt becomes its own session. We only match by bundle identifier
-    /// here — walking the cwd for `.claudian` swept up legitimate Claude Code
-    /// sessions that happened to run inside an Obsidian vault subdirectory.
-    nonisolated var isHostedInClaudian: Bool {
-        let bundleCandidates: [String?] = [
-            clientInfo.bundleIdentifier,
-            clientInfo.terminalBundleIdentifier
-        ]
-        return bundleCandidates.contains { $0?.lowercased() == "md.obsidian" }
     }
 
     /// Codex placeholder sessions can be created before a richer thread record is available.

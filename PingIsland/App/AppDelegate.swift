@@ -42,6 +42,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             AppSettings.playClientStartupSound()
         }
+
+        // Start observing system Focus / Do Not Disturb so the in-app mute
+        // tracks the OS. First launch surfaces the permission prompt.
+        _ = SystemFocusMonitor.shared
     }
 
     @MainActor

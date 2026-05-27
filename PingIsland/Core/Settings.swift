@@ -250,6 +250,7 @@ final class AppSettingsStore: ObservableObject {
     private let defaults = UserDefaults.standard
     private var isBootstrapping = true
     private var subagentVisibilityModeStorage: SubagentVisibilityMode = .visible
+    private var focusMonitorCancellable: AnyCancellable?
 
     // MARK: - Keys
 
@@ -604,8 +605,20 @@ final class AppSettingsStore: ObservableObject {
         appLanguage.resolvedLocale()
     }
 
+    /// True while notifications/sounds should be suppressed. Combines the in-app
+    /// temporary-mute timer with the system Focus / Do Not Disturb state so the
+    /// app mirrors whatever the OS is currently doing.
     var areNotificationsMutedTemporarily: Bool {
-        Self.isNotificationMuteActive(until: temporarilyMuteNotificationsUntil)
+        if Self.isNotificationMuteActive(until: temporarilyMuteNotificationsUntil) {
+            return true
+        }
+        return SystemFocusMonitor.shared.isFocusActive
+    }
+
+    /// True when the suppression is coming from macOS Focus rather than the
+    /// in-app timer. Used by the UI to label the mute button appropriately.
+    var isSystemFocusActive: Bool {
+        SystemFocusMonitor.shared.isFocusActive
     }
 
     func muteNotifications(for duration: TimeInterval, now: Date = Date()) {
@@ -734,6 +747,13 @@ final class AppSettingsStore: ObservableObject {
         applyIsland8BitStartSoundMigrationIfNeeded(for: resolvedSoundThemeMode)
 
         isBootstrapping = false
+
+        // Re-render anything that derives from system Focus / DND state.
+        focusMonitorCancellable = SystemFocusMonitor.shared.$isFocusActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
     }
 }
 

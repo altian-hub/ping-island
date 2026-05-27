@@ -176,15 +176,19 @@ struct NotchView: View {
     }
 
     private var temporaryMuteButtonHelpText: String {
-        guard let mutedUntil = settings.temporarilyMuteNotificationsUntil,
-              AppSettings.isNotificationMuteActive(until: mutedUntil) else {
-            return AppLocalization.string("10 分钟静音通知和声音")
+        if let mutedUntil = settings.temporarilyMuteNotificationsUntil,
+           AppSettings.isNotificationMuteActive(until: mutedUntil) {
+            return AppLocalization.format(
+                "通知与声音已静音至 %@，点击恢复",
+                formattedTemporaryMuteTime(mutedUntil)
+            )
         }
 
-        return AppLocalization.format(
-            "通知与声音已静音至 %@，点击恢复",
-            formattedTemporaryMuteTime(mutedUntil)
-        )
+        if settings.isSystemFocusActive {
+            return AppLocalization.string("系统专注模式开启，通知与声音已静音")
+        }
+
+        return AppLocalization.string("10 分钟静音通知和声音")
     }
 
     private var closedMascotStatus: MascotStatus {

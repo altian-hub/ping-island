@@ -16,6 +16,8 @@
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Ping Island uses Apple Events to focus the matching iTerm, Ghostty, or Terminal window for a session.</string>
+    <key>NSFocusStatusUsageDescription</key>
+    <string>Ping Island reads your Focus / Do Not Disturb status to mute its sounds and reminders when you have Focus turned on.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright 2025. All rights reserved.</string>
 

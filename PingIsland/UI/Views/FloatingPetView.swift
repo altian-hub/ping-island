@@ -20,6 +20,10 @@ struct FloatingPetView: View {
 
     @State private var isHovering = false
     @State private var isExpanded = false
+    @State private var isPopoverHovered = false
+    @State private var autoHideTask: Task<Void, Never>?
+
+    private let popoverAutoHideDelay: TimeInterval = 5.0
 
     init(
         viewModel: NotchViewModel,
@@ -58,6 +62,10 @@ struct FloatingPetView: View {
                     )
                     .frame(width: 460)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onHover { hovering in
+                        isPopoverHovered = hovering
+                        scheduleAutoHide()
+                    }
                 }
         }
         .padding(4)
@@ -69,6 +77,42 @@ struct FloatingPetView: View {
                 isExpanded = true
             }
         }
+        .onChange(of: isExpanded) { _, opened in
+            if opened {
+                scheduleAutoHide()
+            } else {
+                cancelAutoHide()
+                isPopoverHovered = false
+            }
+        }
+        .onDisappear { cancelAutoHide() }
+    }
+
+    private func scheduleAutoHide() {
+        autoHideTask?.cancel()
+        guard isExpanded else { return }
+        // Don't auto-close while the cursor is inside the panel, or while a
+        // child view holds an interaction lock (e.g. AskUserQuestion form,
+        // focused chat input).
+        if isPopoverHovered || viewModel.hasInteractionLock { return }
+        let delay = popoverAutoHideDelay
+        autoHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            if !isExpanded { return }
+            // Re-check at fire time; if still engaged, try again later instead
+            // of closing in the middle of an interaction.
+            if isPopoverHovered || viewModel.hasInteractionLock {
+                scheduleAutoHide()
+                return
+            }
+            isExpanded = false
+        }
+    }
+
+    private func cancelAutoHide() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
     }
 
     private var attentionCount: Int {
@@ -81,15 +125,8 @@ struct FloatingPetView: View {
         let status: MascotStatus = closedMascotStatus
 
         return ZStack {
-            Circle()
-                .fill(Color.black.opacity(isHovering ? 0.82 : 0.72))
-                .overlay(
-                    Circle()
-                        .strokeBorder(Color.white.opacity(isHovering ? 0.32 : 0.18), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.55), radius: 8, y: 3)
-
             MascotView(kind: kind, status: status, size: 44)
+                .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
 
             if sessionMonitorState.monitor.instances.count(where: { $0.needsManualAttention }) > 0 {
                 Circle()

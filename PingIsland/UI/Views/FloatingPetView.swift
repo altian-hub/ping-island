@@ -22,6 +22,11 @@ struct FloatingPetView: View {
     @State private var isExpanded = false
     @State private var isPopoverHovered = false
     @State private var autoHideTask: Task<Void, Never>?
+    @State private var isInDockZone = false
+    @State private var dragWindow: NSWindow?
+    @State private var dragStartOrigin: NSPoint = .zero
+    @State private var dragStartMouse: NSPoint = .zero
+    @State private var isDragging = false
 
     private let popoverAutoHideDelay: TimeInterval = 5.0
 
@@ -44,8 +49,9 @@ struct FloatingPetView: View {
             mascotBubble
                 .contentShape(Circle())
                 .onHover { isHovering = $0 }
+                .background(WindowReader { dragWindow = $0 })
+                .gesture(dragGesture)
                 .onTapGesture { isExpanded.toggle() }
-                .background(WindowDragHandle(onMoved: onPositionChanged))
                 .popover(isPresented: $isExpanded, arrowEdge: .leading) {
                     FloatingPetContent(
                         viewModel: viewModel,
@@ -115,6 +121,63 @@ struct FloatingPetView: View {
         autoHideTask = nil
     }
 
+    /// Snap-zone radius around the top-center of the active screen. Releasing the
+    /// drag inside it converts the floating Buddy back into the docked notch pill.
+    private static let redockHorizontalSlop: CGFloat = 96
+    private static let redockVerticalSlop: CGFloat = 56
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { _ in
+                guard let window = dragWindow else { return }
+                if !isDragging {
+                    isDragging = true
+                    dragStartOrigin = window.frame.origin
+                    dragStartMouse = NSEvent.mouseLocation
+                }
+                let current = NSEvent.mouseLocation
+                let dx = current.x - dragStartMouse.x
+                let dy = current.y - dragStartMouse.y
+                let newOrigin = NSPoint(x: dragStartOrigin.x + dx, y: dragStartOrigin.y + dy)
+                window.setFrameOrigin(newOrigin)
+                onPositionChanged(newOrigin)
+                let next = isFrameInDockZone(window.frame)
+                if next != isInDockZone {
+                    isInDockZone = next
+                }
+            }
+            .onEnded { _ in
+                defer {
+                    isDragging = false
+                    isInDockZone = false
+                }
+                guard let window = dragWindow, isDragging else { return }
+                handleDragEnded(window.frame)
+            }
+    }
+
+    private func handleDragEnded(_ frame: NSRect) {
+        guard isFrameInDockZone(frame) else { return }
+
+        isExpanded = false
+        cancelAutoHide()
+        // Defer to next runloop so the drag's mouseUp finishes settling the
+        // window before the controller tears it down.
+        DispatchQueue.main.async {
+            onRedock()
+        }
+    }
+
+    private func isFrameInDockZone(_ frame: NSRect) -> Bool {
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(frame) })
+            ?? NSScreen.main
+        guard let screen else { return false }
+        let horizontalDistance = abs(frame.midX - screen.frame.midX)
+        let verticalDistance = screen.frame.maxY - frame.maxY
+        return horizontalDistance <= Self.redockHorizontalSlop
+            && verticalDistance <= Self.redockVerticalSlop
+    }
+
     private var attentionCount: Int {
         sessionMonitorState.monitor.instances.filter { $0.needsManualAttention }.count
     }
@@ -125,6 +188,17 @@ struct FloatingPetView: View {
         let status: MascotStatus = closedMascotStatus
 
         return ZStack {
+            if isInDockZone {
+                Circle()
+                    .fill(Color.white.opacity(0.18))
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5)
+                    )
+                    .frame(width: 60, height: 60)
+                    .transition(.opacity)
+            }
+
             MascotView(kind: kind, status: status, size: 44)
                 .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
 
@@ -137,8 +211,9 @@ struct FloatingPetView: View {
             }
         }
         .frame(width: 64, height: 64)
-        .scaleEffect(isHovering ? 1.04 : 1.0)
+        .scaleEffect(isInDockZone ? 1.12 : (isHovering ? 1.04 : 1.0))
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovering)
+        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isInDockZone)
     }
 
     private var closedMascotClient: MascotClient {
@@ -185,51 +260,23 @@ final class SessionMonitorObserver: ObservableObject {
     }
 }
 
-/// Bridges to AppKit window dragging without intercepting SwiftUI tap gestures.
-private struct WindowDragHandle: NSViewRepresentable {
-    let onMoved: (NSPoint) -> Void
+/// Bubbles the hosting NSWindow up into SwiftUI state so a DragGesture can
+/// drive `window.setFrameOrigin` directly.
+private struct WindowReader: NSViewRepresentable {
+    let onResolved: (NSWindow?) -> Void
 
-    func makeNSView(context: Context) -> DragRelayView {
-        let view = DragRelayView()
-        view.onMoved = onMoved
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak view] in
+            onResolved(view?.window)
+        }
         return view
     }
 
-    func updateNSView(_ nsView: DragRelayView, context: Context) {
-        nsView.onMoved = onMoved
-    }
-}
-
-final class DragRelayView: NSView {
-    var onMoved: ((NSPoint) -> Void)?
-    private var initialOrigin: NSPoint?
-    private var initialMouse: NSPoint?
-
-    override var acceptsFirstResponder: Bool { true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Don't intercept clicks meant for SwiftUI buttons - only handle drags.
-        // The mascot bubble's onTapGesture will fire on quick clicks because
-        // mouseDown -> mouseUp without enough movement won't fire onMoved.
-        nil
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard let window else { return }
-        initialOrigin = window.frame.origin
-        initialMouse = NSEvent.mouseLocation
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let window,
-              let initialOrigin,
-              let initialMouse else { return }
-        let current = NSEvent.mouseLocation
-        let dx = current.x - initialMouse.x
-        let dy = current.y - initialMouse.y
-        let newOrigin = NSPoint(x: initialOrigin.x + dx, y: initialOrigin.y + dy)
-        window.setFrameOrigin(newOrigin)
-        onMoved?(newOrigin)
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            onResolved(nsView?.window)
+        }
     }
 }
 

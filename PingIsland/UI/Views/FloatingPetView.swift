@@ -28,6 +28,7 @@ struct FloatingPetView: View {
     @State private var dragStartMouse: NSPoint = .zero
     @State private var isDragging = false
     @State private var lastBubbleToggleAt: Date = .distantPast
+    @State private var soundController = SessionSoundController()
 
     /// Minimum time between bubble taps. Without this a double-click on the
     /// companion would open then immediately close the panel before the user
@@ -86,12 +87,27 @@ struct FloatingPetView: View {
                 }
         }
         .padding(4)
-        .onChange(of: attentionCount) { _, newValue in
+        .onChange(of: sessionMonitorState.monitor.instances) { _, instances in
+            // Play notification sounds in buddy mode too (NotchView is not mounted
+            // here, so without this the buddy would be silent on attention/completion).
+            soundController.handle(instances)
+            if SwarmDiagnostics.isEnabled {
+                SwarmDiagnostics.log("BUDDY-SNAP", "attn=\(attentionCount) expanded=\(isExpanded) | \(SwarmDiagnostics.summarize(instances))")
+            }
+        }
+        .onChange(of: attentionCount) { oldValue, newValue in
+            if SwarmDiagnostics.isEnabled {
+                SwarmDiagnostics.log("BUDDY-ATTN", "count \(oldValue)->\(newValue) expanded=\(isExpanded) willAutoExpand=\(newValue > 0 && !isExpanded)")
+            }
             // Auto-expand when a session newly needs attention (permission
             // request, AskUserQuestion, etc.) so the user doesn't have to
             // click the bubble to see what changed.
             if newValue > 0, !isExpanded {
                 isExpanded = true
+            } else if newValue == 0 {
+                // Attention cleared: start the auto-hide timer that was suppressed
+                // while a prompt was pending.
+                scheduleAutoHide()
             }
         }
         .onChange(of: isExpanded) { _, opened in
@@ -108,23 +124,30 @@ struct FloatingPetView: View {
     private func scheduleAutoHide() {
         autoHideTask?.cancel()
         guard isExpanded else { return }
-        // Don't auto-close while the cursor is inside the panel, or while a
-        // child view holds an interaction lock (e.g. AskUserQuestion form,
-        // focused chat input).
-        if isPopoverHovered || viewModel.hasInteractionLock { return }
+        // Don't auto-close while the cursor is inside the panel, while a child view
+        // holds an interaction lock (e.g. AskUserQuestion form, focused chat input),
+        // or while a session still needs manual attention (a pending permission /
+        // question must stay visible until it's resolved).
+        if isPopoverHovered || viewModel.hasInteractionLock || hasPendingManualAttention { return }
         let delay = popoverAutoHideDelay
         autoHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             if !isExpanded { return }
             // Re-check at fire time; if still engaged, try again later instead
-            // of closing in the middle of an interaction.
-            if isPopoverHovered || viewModel.hasInteractionLock {
+            // of closing in the middle of an interaction or pending prompt.
+            if isPopoverHovered || viewModel.hasInteractionLock || hasPendingManualAttention {
                 scheduleAutoHide()
                 return
             }
             isExpanded = false
         }
+    }
+
+    /// Whether any tracked session is currently waiting on the user (permission
+    /// request, AskUserQuestion, etc.). Mirrors `attentionCount > 0`.
+    private var hasPendingManualAttention: Bool {
+        sessionMonitorState.monitor.instances.contains { $0.needsManualAttention }
     }
 
     private func cancelAutoHide() {

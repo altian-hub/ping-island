@@ -54,12 +54,7 @@ struct NotchView: View {
     @State private var isVisible: Bool = false
     @State private var isHovering: Bool = false
     @State private var isBouncing: Bool = false
-    @State private var hasPrimedSoundTransitions: Bool = false
-    @State private var previousProcessingIds: Set<String> = []
-    @State private var previousAttentionSoundIds: Set<String> = []
-    @State private var previousCompletionSoundIds: Set<String> = []
-    @State private var previousTaskErrorIds: Set<String> = []
-    @State private var previousResourceLimitIds: Set<String> = []
+    @State private var soundController = SessionSoundController()
     @State private var previousCompletionNotificationPhases: [String: SessionPhase] = [:]
     @State private var completionNotificationQueue: [SessionCompletionNotification] = []
     @State private var activeCompletionNotification: SessionCompletionNotification?
@@ -1128,99 +1123,10 @@ struct NotchView: View {
     }
 
     private func handleSessionSoundTransitions(_ instances: [SessionState]) {
-        if !hasPrimedSoundTransitions {
-            previousProcessingIds = Set(
-                instances
-                    .filter { $0.phase == .processing || $0.phase == .compacting }
-                    .map(\.stableId)
-            )
-            previousAttentionSoundIds = Set(
-                instances
-                    .filter { $0.needsApprovalResponse || ($0.phase == .waitingForInput && $0.intervention != nil) }
-                    .map(\.stableId)
-            )
-            previousCompletionSoundIds = Set(
-                instances
-                    .filter { $0.phase == .waitingForInput && $0.intervention == nil }
-                    .map(\.stableId)
-            )
-            previousTaskErrorIds = Set(
-                instances.flatMap { session in
-                    session.completedErrorToolIDs.map { "\(session.sessionId):\($0)" }
-                }
-            )
-            previousResourceLimitIds = Set(
-                instances
-                    .filter { $0.phase == .compacting }
-                    .map(\.stableId)
-            )
-            hasPrimedSoundTransitions = true
-            return
-        }
-
-        let processingSessions = instances.filter {
-            $0.phase == .processing || $0.phase == .compacting
-        }
-        let attentionSessions = instances.filter {
-            $0.needsApprovalResponse || ($0.phase == .waitingForInput && $0.intervention != nil)
-        }
-        let completedSessions = instances.filter { SessionCompletionStateEvaluator.isCompletedReadySession($0) }
-        let resourceLimitedSessions = instances.filter {
-            $0.phase == .compacting
-        }
-
-        let newProcessingIds = Set(processingSessions.map(\.stableId))
-        let newAttentionIds = Set(attentionSessions.map(\.stableId))
-        let newCompletedIds = Set(completedSessions.map(\.stableId))
-        let newTaskErrorIds = Set(
-            instances.flatMap { session in
-                session.completedErrorToolIDs.map { "\(session.sessionId):\($0)" }
-            }
-        )
-        let newResourceLimitIds = Set(resourceLimitedSessions.map(\.stableId))
-        let errorDeltaIds = newTaskErrorIds.subtracting(previousTaskErrorIds)
-        let errorSessions = instances.filter { session in
-            session.completedErrorToolIDs.contains { errorDeltaIds.contains("\(session.sessionId):\($0)") }
-        }
-        let completionDeltaIds = newCompletedIds.subtracting(previousCompletionSoundIds)
-        let newlyCompletedSessions = completedSessions.filter { session in
-            completionDeltaIds.contains(session.stableId)
-        }
-
-        let isNewAttention = !newAttentionIds.subtracting(previousAttentionSoundIds).isEmpty
-        let isNewCompletion = !completionDeltaIds.isEmpty
-        let isNewTaskError = !errorDeltaIds.isEmpty
-        let isNewResourceLimit = !newResourceLimitIds.subtracting(previousResourceLimitIds).isEmpty
-
-        if isNewTaskError {
-            playEventSoundIfNeeded(.taskError, sessions: errorSessions)
-        } else if isNewResourceLimit {
-            playEventSoundIfNeeded(.resourceLimit, sessions: resourceLimitedSessions)
-        } else if isNewAttention {
-            playEventSoundIfNeeded(.attentionRequired, sessions: attentionSessions)
-        } else if isNewCompletion {
-            playEventSoundIfNeeded(.taskCompleted, sessions: newlyCompletedSessions)
-        } else if !newProcessingIds.subtracting(previousProcessingIds).isEmpty {
-            playEventSoundIfNeeded(.processingStarted, sessions: processingSessions)
-        }
-
-        previousProcessingIds = newProcessingIds
-        previousAttentionSoundIds = newAttentionIds
-        previousCompletionSoundIds = newCompletedIds
-        previousTaskErrorIds = newTaskErrorIds
-        previousResourceLimitIds = newResourceLimitIds
-    }
-
-    private func playEventSoundIfNeeded(_ event: NotificationEvent, sessions: [SessionState]) {
-        guard AppSettings.soundEnabled else { return }
-
-        Task {
-            let shouldPlaySound = await shouldPlayNotificationSound(for: sessions)
-            if shouldPlaySound {
-                _ = await MainActor.run {
-                    AppSettings.playSound(for: event)
-                }
-            }
+        let outcome = soundController.handle(instances)
+        if SwarmDiagnostics.isEnabled {
+            let event = outcome.map { "\($0.event)" } ?? "none"
+            SwarmDiagnostics.log("ONCHANGE", "emit=\(event) | \(SwarmDiagnostics.summarize(instances))")
         }
     }
 
@@ -1251,23 +1157,6 @@ struct NotchView: View {
         }
     }
 
-    /// Determine if notification sound should play for the given sessions
-    /// Returns true if ANY session is not actively focused
-    private func shouldPlayNotificationSound(for sessions: [SessionState]) async -> Bool {
-        for session in sessions {
-            guard let pid = session.pid else {
-                // No PID means we can't check focus, assume not focused
-                return true
-            }
-
-            let isFocused = await TerminalVisibilityDetector.isSessionFocused(sessionPid: pid)
-            if !isFocused {
-                return true
-            }
-        }
-
-        return false
-    }
 }
 
 private struct NotchSettingsButton: View {

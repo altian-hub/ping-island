@@ -422,6 +422,9 @@ class SessionMonitor: ObservableObject {
 
     private func refreshVisibleSessions() {
         let visibleSessions = filteredVisibleSessions(from: allSessions)
+        if SwarmDiagnostics.isEnabled {
+            SwarmDiagnostics.log("PUBLISH", SwarmDiagnostics.summarize(visibleSessions))
+        }
         instances = visibleSessions
         pendingInstances = visibleSessions.filter { $0.needsAttention }
     }

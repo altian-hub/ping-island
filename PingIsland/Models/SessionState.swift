@@ -404,7 +404,24 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// so this can only be detected from parsed transcript content, not at hook intake.
     nonisolated var isLikelyClaudeAuxiliaryTitleGenForUI: Bool {
         guard provider == .claude else { return false }
-        return conversationInfo.isTitleGenerationPrompt
+        if conversationInfo.isTitleGenerationPrompt {
+            return true
+        }
+        // Defensive fallback: the parse-time flag only catches the prompt when it is the
+        // first user message of a freshly parsed transcript. During a swarm burst the
+        // prompt can also reach the row as the last message, as a hook-delivered preview
+        // before the transcript is parsed, or truncated in firstUserMessage. Probe every
+        // text the row can actually display for the title-gen fragment.
+        for text in [
+            conversationInfo.firstUserMessage,
+            conversationInfo.lastMessage,
+            conversationInfo.summary,
+            previewText,
+            latestHookMessage
+        ] where ConversationParser.containsClaudeTitleGenerationFragment(text) {
+            return true
+        }
+        return false
     }
 
     /// Claude Code 2.1.x fires multiple SessionStart hooks per `claude` invocation —

@@ -238,6 +238,18 @@ actor ConversationParser {
             && text.contains("plain text only with no quotes or punctuation")
     }
 
+    /// Looser, truncation-tolerant probe for the same title-gen prompt. The strict
+    /// two-marker match above needs the untruncated text, but by the time a row is
+    /// displayed the prompt may only survive as a truncated `firstUserMessage` (50 chars)
+    /// or `lastMessage` (80 chars), or arrive via a hook preview before the transcript is
+    /// parsed. This fragment sits near the start of the prompt ("In N words, plain text
+    /// only with no quotes …") so it survives those truncations, and is distinctive enough
+    /// that real prompts effectively never contain it.
+    static func containsClaudeTitleGenerationFragment(_ text: String?) -> Bool {
+        guard let text, !text.isEmpty else { return false }
+        return text.contains("plain text only with no quotes")
+    }
+
     private static func contentBlocks(in message: [String: Any]) -> [[String: Any]] {
         if let text = message["content"] as? String {
             return [["type": "text", "text": text]]

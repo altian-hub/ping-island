@@ -393,7 +393,12 @@ struct InstanceRow: View {
 
     private var primaryFooter: some View {
         HStack(spacing: 6) {
-            primaryMetaBadges
+            // Hide the source badges while the approval buttons are showing: the
+            // Deny / Always / Allow set needs the full footer width, otherwise the
+            // labels get compressed and wrap ("Alwa\nys").
+            if !isWaitingForApproval {
+                primaryMetaBadges
+            }
 
             Spacer(minLength: 8)
 
@@ -1028,6 +1033,8 @@ struct InlineApprovalButtons: View {
             } label: {
                 Text("Deny")
                     .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundColor(.white.opacity(0.6))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -1044,6 +1051,8 @@ struct InlineApprovalButtons: View {
                 } label: {
                     Text(AppLocalization.string(sessionAction.compactButtonTitleKey))
                         .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundColor(.white.opacity(0.86))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -1060,6 +1069,8 @@ struct InlineApprovalButtons: View {
             } label: {
                 Text("Allow")
                     .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundColor(.black)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

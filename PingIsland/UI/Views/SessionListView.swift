@@ -55,7 +55,7 @@ struct SessionListView: View {
     }
 
     private var listContent: some View {
-        LazyVStack(spacing: 2) {
+        LazyVStack(spacing: 4) {
             ForEach(sortedInstances) { session in
                 InstanceRow(
                     session: session,
@@ -72,6 +72,7 @@ struct SessionListView: View {
                 .id(session.stableId)
             }
         }
+        .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             GeometryReader { geometry in
@@ -262,65 +263,10 @@ struct InstanceRow: View {
     }
 
     var body: some View {
-        HStack(alignment: usesSingleLineCompactLayout ? .center : .top, spacing: 10) {
-            leadingContent
-
-            if isCodexSubagentCompactPresentation {
-                subagentCompactBadgeLine
-            } else if usesCodexSubagentTitleOnlyPresentation {
-                VStack(alignment: .trailing, spacing: 6) {
-                    subagentCompactBadgeLine
-
-                    trailingActions
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-            } else if isCollapsedCompactPresentation {
-                compactMetaLine
-            } else {
-                VStack(alignment: .trailing, spacing: 6) {
-                    HStack(spacing: 6) {
-                        metaBadge(
-                            timeLabel,
-                            tint: Color.white.opacity(0.1),
-                            foreground: .white.opacity(0.64),
-                            fontDesign: .monospaced
-                        )
-                        metaBadge(providerLabel, tint: providerColor.opacity(0.2))
-                        if let codexSubagentBadgeText = session.codexSubagentBadgeText {
-                            metaBadge(
-                                codexSubagentBadgeText,
-                                tint: Color.white.opacity(0.12),
-                                foreground: .white.opacity(0.9),
-                                fontDesign: .monospaced
-                            )
-                        }
-                        if session.isRemoteSession {
-                            remoteSessionBadge()
-                        }
-                        if let ideHostBadgeLabel = session.ideHostBadgeLabel {
-                            metaBadge(
-                                ideHostBadgeLabel,
-                                tint: ideHostBadgeTint,
-                                foreground: .white.opacity(0.9)
-                            )
-                        }
-                        if let terminalSourceLabel {
-                            metaBadge(
-                                terminalSourceLabel,
-                                tint: terminalBadgeTint,
-                                foreground: .white.opacity(0.9)
-                            )
-                        }
-                    }
-
-                    trailingActions
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-            }
-        }
+        rowContent
         .padding(.leading, 10)
         .padding(.trailing, 12)
-        .padding(.vertical, usesSingleLineCompactLayout ? 5 : 8)
+        .padding(.vertical, usesSingleLineCompactLayout ? 5 : 9)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: session.phase)
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isExpanded)
         .saturation(isCollapsedCompactPresentation ? 0 : 1)
@@ -336,6 +282,158 @@ struct InstanceRow: View {
         .onHover { isHovered = $0 }
         .task {
             isYabaiAvailable = await WindowFinder.shared.isYabaiAvailable()
+        }
+    }
+
+    // MARK: - Row layout
+
+    /// The primary (non-compact, non-subagent) presentation. Lays the row out as a
+    /// single column — title + relative time on the first line, the conversation
+    /// preview, then a footer line of metadata badges and actions — so the title gets
+    /// the full panel width and the source badges never wrap against a cramped trailing
+    /// column (the previous layout squeezed both into the right edge).
+    private var usesPrimaryExpandedLayout: Bool {
+        !isCodexSubagentCompactPresentation
+            && !usesCodexSubagentTitleOnlyPresentation
+            && !isCollapsedCompactPresentation
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        if usesPrimaryExpandedLayout {
+            primaryRow
+        } else {
+            legacyRow
+        }
+    }
+
+    /// Compact / subagent presentations keep the original leading-content + trailing-column
+    /// layout; only the spacious primary row is restructured.
+    private var legacyRow: some View {
+        HStack(alignment: usesSingleLineCompactLayout ? .center : .top, spacing: 10) {
+            leadingContent
+
+            if isCodexSubagentCompactPresentation {
+                subagentCompactBadgeLine
+            } else if usesCodexSubagentTitleOnlyPresentation {
+                VStack(alignment: .trailing, spacing: 6) {
+                    subagentCompactBadgeLine
+
+                    trailingActions
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            } else {
+                compactMetaLine
+            }
+        }
+    }
+
+    private var primaryAvatarWidth: CGFloat { 34 }
+    private var primaryAvatarSpacing: CGFloat { 11 }
+
+    private var primaryRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            primaryHeaderTappable
+
+            primaryFooter
+                .padding(.leading, primaryAvatarWidth + primaryAvatarSpacing)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Title + preview, carrying the same tap semantics the old `leadingContent` did:
+    /// minimal-compact rows toggle their expansion on a single tap, everyone else
+    /// activates the session (double-tap opens chat).
+    @ViewBuilder
+    private var primaryHeaderTappable: some View {
+        if isMinimalCompactPresentation {
+            primaryHeader
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { onActivate() }
+                .onTapGesture { onToggleExpanded() }
+        } else {
+            primaryHeader
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { onChat() }
+                .onTapGesture { onActivate() }
+        }
+    }
+
+    private var primaryHeader: some View {
+        HStack(alignment: .top, spacing: primaryAvatarSpacing) {
+            avatarView
+
+            VStack(alignment: .leading, spacing: 5) {
+                // NOTE: use .center, not .firstTextBaseline. titleLine is a concatenated
+                // Text mixing font sizes (project · title); baseline-aligning it against
+                // the time label produces an invalid baseline that crashes AppKit's
+                // constraint solver when the row renders in the notch surface.
+                HStack(alignment: .center, spacing: 8) {
+                    titleLine
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
+
+                    Text(timeLabel)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.4))
+                        .fixedSize()
+                }
+
+                if shouldShowExpandedDetails {
+                    previewLinesView
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var primaryFooter: some View {
+        HStack(spacing: 6) {
+            primaryMetaBadges
+
+            Spacer(minLength: 8)
+
+            trailingActions
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        }
+    }
+
+    private var primaryMetaBadges: some View {
+        HStack(spacing: 6) {
+            metaBadge(providerLabel, tint: providerColor.opacity(0.2))
+
+            if let codexSubagentBadgeText = session.codexSubagentBadgeText {
+                metaBadge(
+                    codexSubagentBadgeText,
+                    tint: Color.white.opacity(0.12),
+                    foreground: .white.opacity(0.9),
+                    fontDesign: .monospaced
+                )
+            }
+
+            if session.isRemoteSession {
+                remoteSessionBadge()
+            }
+
+            if let ideHostBadgeLabel = session.ideHostBadgeLabel {
+                metaBadge(
+                    ideHostBadgeLabel,
+                    tint: ideHostBadgeTint,
+                    foreground: .white.opacity(0.9)
+                )
+            }
+
+            if let terminalSourceLabel {
+                metaBadge(
+                    terminalSourceLabel,
+                    tint: terminalBadgeTint,
+                    foreground: .white.opacity(0.9)
+                )
+            }
         }
     }
 
@@ -835,6 +933,8 @@ struct InstanceRow: View {
         Text(text)
             .font(.system(size: compact ? 9 : 10, weight: .semibold, design: fontDesign))
             .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(foreground)
             .padding(.horizontal, compact ? 6 : 8)
             .padding(.vertical, compact ? 2 : 4)

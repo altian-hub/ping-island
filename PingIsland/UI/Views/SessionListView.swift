@@ -55,7 +55,7 @@ struct SessionListView: View {
     }
 
     private var listContent: some View {
-        LazyVStack(spacing: 4) {
+        LazyVStack(spacing: 3) {
             ForEach(sortedInstances) { session in
                 InstanceRow(
                     session: session,
@@ -266,7 +266,7 @@ struct InstanceRow: View {
         rowContent
         .padding(.leading, 10)
         .padding(.trailing, 12)
-        .padding(.vertical, usesSingleLineCompactLayout ? 5 : 9)
+        .padding(.vertical, usesSingleLineCompactLayout ? 4 : 7)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: session.phase)
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isExpanded)
         .saturation(isCollapsedCompactPresentation ? 0 : 1)
@@ -332,7 +332,7 @@ struct InstanceRow: View {
     private var primaryAvatarSpacing: CGFloat { 11 }
 
     private var primaryRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             primaryHeaderTappable
 
             primaryFooter
@@ -363,7 +363,7 @@ struct InstanceRow: View {
         HStack(alignment: .top, spacing: primaryAvatarSpacing) {
             avatarView
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 3) {
                 // NOTE: use .center, not .firstTextBaseline. titleLine is a concatenated
                 // Text mixing font sizes (project · title); baseline-aligning it against
                 // the time label produces an invalid baseline that crashes AppKit's
@@ -497,7 +497,7 @@ struct InstanceRow: View {
             .font(.system(size: projectTitleFontSize, weight: .bold))
             .foregroundColor(.white.opacity(0.34))
         + Text(session.displayTitle)
-            .font(.system(size: sessionTitleFontSize, weight: .bold))
+            .font(.system(size: projectTitleFontSize, weight: .bold))
             .foregroundColor(.white)
     }
 
@@ -720,7 +720,7 @@ struct InstanceRow: View {
 
     @ViewBuilder
     private var previewLinesView: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(previewLines) { line in
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     if let prefix = line.prefix {

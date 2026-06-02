@@ -16,6 +16,12 @@ struct ConversationInfo: Equatable, Sendable {
     let lastToolName: String?  // Tool name if lastMessageRole is "tool"
     let firstUserMessage: String?  // Fallback title when no summary
     let lastUserMessageDate: Date?  // Timestamp of last user message (for stable sorting)
+    /// True when the first user message is Claude Code's internal session-title
+    /// generation prompt ("In 4-6 words … write a session title that captures: …").
+    /// Those helper sessions get their own session_id and a small real transcript,
+    /// so the zero-byte phantom heuristic misses them; this flag lets the UI hide them.
+    /// Defaulted so existing (Codex) initializers compile unchanged.
+    var isTitleGenerationPrompt: Bool = false
 }
 
 actor ConversationParser {
@@ -121,6 +127,7 @@ actor ConversationParser {
         var lastToolName: String?
         var firstUserMessage: String?
         var lastUserMessageDate: Date?
+        var isTitleGenerationPrompt = false
 
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -137,6 +144,9 @@ actor ConversationParser {
             if type == "user" && !isMeta {
                 if let message = json["message"] as? [String: Any],
                    let msgContent = Self.firstDisplayText(in: message) {
+                    // Detect on the full, untruncated text — the title-gen markers
+                    // sit past the 50-char cut applied to firstUserMessage.
+                    isTitleGenerationPrompt = Self.isClaudeTitleGenerationPrompt(msgContent)
                     firstUserMessage = Self.truncateMessage(msgContent, maxLength: 50)
                     break
                 }
@@ -206,8 +216,26 @@ actor ConversationParser {
             lastMessageRole: lastMessageRole,
             lastToolName: lastToolName,
             firstUserMessage: firstUserMessage,
-            lastUserMessageDate: lastUserMessageDate
+            lastUserMessageDate: lastUserMessageDate,
+            isTitleGenerationPrompt: isTitleGenerationPrompt
         )
+    }
+
+    /// Claude Code spawns a throwaway helper session to title each conversation. Its only
+    /// user message is a title-generation prompt of the form:
+    /// "In 4-6 words, plain text only with no quotes or punctuation, write a session title
+    ///  that captures: '…'". These helpers get their own session_id and a small but
+    /// non-empty transcript, so the zero-byte phantom heuristic does not catch them.
+    /// Match two stable, distinctive fragments (mirroring `CodexAuxiliaryHookFilter`'s
+    /// multi-marker style) so a changed word count ("5-10 words") or trailing path can't
+    /// slip a ghost row through, while staying specific enough to avoid real prompts.
+    static func isClaudeTitleGenerationPrompt(_ text: String?) -> Bool {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return false
+        }
+        return text.contains("write a session title that captures")
+            && text.contains("plain text only with no quotes or punctuation")
     }
 
     private static func contentBlocks(in message: [String: Any]) -> [[String: Any]] {

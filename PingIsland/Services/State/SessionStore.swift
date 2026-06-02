@@ -2646,8 +2646,10 @@ actor SessionStore {
         // Don't persist phantom Claude swarm/prewarm sessions: they advertise a
         // transcript_path but never write a rollout. Persisting them inflates the cache
         // (hundreds per hour on an active Claude user) and the entries are useless
-        // because they can never be rehydrated into a real session.
-        if session.isLikelyEmptyClaudePlaceholderForUI {
+        // because they can never be rehydrated into a real session. The same goes for
+        // Claude title-generation helper sessions, which write a small real transcript
+        // but are never a session the user wants to revisit.
+        if session.isLikelyEmptyClaudePlaceholderForUI || session.isLikelyClaudeAuxiliaryTitleGenForUI {
             if persistedAssociations.removeValue(forKey: key) != nil {
                 return true
             }

@@ -389,7 +389,22 @@ struct SessionState: Equatable, Identifiable, Sendable {
             return true
         }
 
+        if isLikelyClaudeAuxiliaryTitleGenForUI {
+            return true
+        }
+
         return isLikelyEmptyClaudePlaceholderForUI
+    }
+
+    /// Claude Code spawns a helper session to generate the title for each conversation.
+    /// Unlike the empty prewarm/swarm phantoms, these write a small but non-empty
+    /// transcript (their lone user message is the title-gen prompt), so the zero-byte
+    /// `isLikelyEmptyClaudePlaceholderForUI` heuristic misses them and they leak into the
+    /// panel as ghost rows. They never fire a UserPromptSubmit hook carrying the prompt,
+    /// so this can only be detected from parsed transcript content, not at hook intake.
+    nonisolated var isLikelyClaudeAuxiliaryTitleGenForUI: Bool {
+        guard provider == .claude else { return false }
+        return conversationInfo.isTitleGenerationPrompt
     }
 
     /// Claude Code 2.1.x fires multiple SessionStart hooks per `claude` invocation —

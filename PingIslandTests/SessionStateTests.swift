@@ -233,7 +233,7 @@ final class SessionStateTests: XCTestCase {
         XCTAssertTrue(activeSession.shouldSortBeforeInQueue(idleSession))
     }
 
-    func testActiveSessionSortsAheadOfWaitingForInputSession() {
+    func testWaitingForInputSessionSortsAheadOfActiveSession() {
         let now = Date()
         let activeSession = SessionState(
             sessionId: "active-session",
@@ -248,8 +248,10 @@ final class SessionStateTests: XCTestCase {
             lastActivity: now.addingTimeInterval(-5)
         )
 
-        XCTAssertTrue(activeSession.shouldSortBeforeInQueue(waitingSession))
-        XCTAssertFalse(waitingSession.shouldSortBeforeInQueue(activeSession))
+        // A session awaiting a human response (question / permission) sorts to the
+        // top, above a session that is merely processing.
+        XCTAssertTrue(waitingSession.shouldSortBeforeInQueue(activeSession))
+        XCTAssertFalse(activeSession.shouldSortBeforeInQueue(waitingSession))
     }
 
     func testCompactHookMessageNormalizesWhitespace() {

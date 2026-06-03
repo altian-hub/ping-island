@@ -964,10 +964,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
     }
 
     nonisolated func shouldSortBeforeInQueue(_ other: SessionState) -> Bool {
-        if presentsActiveInUI != other.presentsActiveInUI {
-            return presentsActiveInUI
-        }
-
+        // A session awaiting a human response (permission prompt / question) always
+        // sorts to the top — above a session that is merely processing — so the row
+        // that needs you is never buried under active work.
         if needsManualAttention != other.needsManualAttention {
             return needsManualAttention
         }
@@ -978,6 +977,10 @@ struct SessionState: Equatable, Identifiable, Sendable {
             if dateA != dateB {
                 return dateA < dateB
             }
+        }
+
+        if presentsActiveInUI != other.presentsActiveInUI {
+            return presentsActiveInUI
         }
 
         let priorityA = queuePhasePriority

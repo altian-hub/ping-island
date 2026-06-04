@@ -393,6 +393,10 @@ struct SessionState: Equatable, Identifiable, Sendable {
             return true
         }
 
+        if needsManualAttention {
+            return false
+        }
+
         return isLikelyEmptyClaudePlaceholderForUI
     }
 
@@ -558,6 +562,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
 
     nonisolated func shouldHideAsDuplicateCodexPlaceholder(comparedTo other: SessionState) -> Bool {
         guard sessionId != other.sessionId else { return false }
+        guard !needsManualAttention else { return false }
         guard isLikelyEmptyCodexPlaceholderForUI || isLikelyTransientCodexContinuationPlaceholder else { return false }
         guard other.provider == .codex else { return false }
         guard other.hasDurableCodexThreadIdentity else { return false }
@@ -579,6 +584,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
 
     nonisolated func shouldHideAsDuplicateOpenCodeChildSession(comparedTo other: SessionState) -> Bool {
         guard sessionId != other.sessionId else { return false }
+        guard !needsManualAttention else { return false }
         guard isLikelyOpenCodeChildSessionPlaceholderForUI else { return false }
         guard other.clientInfo.brand == .opencode else { return false }
         guard other.hasDurableOpenCodeDisplayIdentity else { return false }

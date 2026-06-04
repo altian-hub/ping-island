@@ -103,7 +103,18 @@ struct FloatingPetView: View {
             // request, AskUserQuestion, etc.) so the user doesn't have to
             // click the bubble to see what changed.
             if newValue > 0, !isExpanded {
+                // Switch to session list before expanding so the attention session
+                // is immediately visible rather than showing an unrelated chat.
+                if case .chat(let session) = viewModel.contentType, !session.needsManualAttention {
+                    viewModel.contentType = .instances
+                }
                 isExpanded = true
+            } else if newValue > oldValue, newValue > 0, isExpanded {
+                // Already expanded: if showing a chat for a session that doesn't need
+                // attention, surface the list so the new attention session is visible.
+                if case .chat(let session) = viewModel.contentType, !session.needsManualAttention {
+                    viewModel.contentType = .instances
+                }
             } else if newValue == 0 {
                 // Attention cleared: start the auto-hide timer that was suppressed
                 // while a prompt was pending.
@@ -248,6 +259,8 @@ struct FloatingPetView: View {
         .scaleEffect(isInDockZone ? 1.12 : (isHovering ? 1.04 : 1.0))
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovering)
         .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isInDockZone)
+        // Periodically nudge the buddy with a quick shake while it waits on the user.
+        .modifier(BuddyWaitingShake(active: hasPendingManualAttention))
     }
 
     private var closedMascotClient: MascotClient {
@@ -273,6 +286,41 @@ struct FloatingPetView: View {
             .filter { $0.presentsActiveInUI }
             .sorted { $0.lastActivity > $1.lastActivity }
             .first
+    }
+}
+
+/// Gives the floating buddy a short, decaying side-to-side shake on a fixed
+/// cadence while a session is waiting on the user — a periodic "hey, look at me"
+/// nudge layered on top of the mascot's own warning animation. The shake rides a
+/// global clock so the burst windows line up regardless of when the view mounted.
+private struct BuddyWaitingShake: ViewModifier {
+    let active: Bool
+
+    /// Seconds between shake bursts.
+    private static let period: TimeInterval = 2.8
+    /// Length of each shake burst.
+    private static let burst: TimeInterval = 0.6
+
+    func body(content: Content) -> some View {
+        if active {
+            TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { context in
+                let amount = Self.shake(at: context.date.timeIntervalSinceReferenceDate)
+                content
+                    .rotationEffect(.degrees(Double(amount) * 8))
+                    .offset(x: amount * 6)
+            }
+        } else {
+            content
+        }
+    }
+
+    /// Decaying oscillation in roughly [-1, 1] during the burst window, else 0.
+    private static func shake(at time: TimeInterval) -> CGFloat {
+        let t = time.truncatingRemainder(dividingBy: period)
+        guard t < burst else { return 0 }
+        let progress = t / burst                       // 0...1 across the burst
+        let decay = pow(1 - progress, 1.6)             // fade the wobble out
+        return CGFloat(sin(progress * .pi * 6) * decay)
     }
 }
 

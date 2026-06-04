@@ -76,18 +76,21 @@ struct NotchView: View {
         sessionMonitor.instances.contains { $0.needsApprovalResponse }
     }
 
-    /// Whether any session needs explicit human intervention (for example multi-choice questions).
+    /// Whether any session needs explicit human intervention (for example multi-choice questions or permission prompts).
     private var hasHumanIntervention: Bool {
-        sessionMonitor.instances.contains {
-            $0.phase == .waitingForInput && $0.intervention != nil
-        }
+        sessionMonitor.instances.contains { $0.needsManualAttention }
     }
 
     /// Whether any session requires a user decision right now.
     private var hasManualAttentionIndicator: Bool {
-        sessionMonitor.instances.contains {
-            $0.needsApprovalResponse || $0.intervention != nil
-        }
+        sessionMonitor.instances.contains { $0.needsManualAttention }
+    }
+
+    /// The breathing glow mirrors the bell exactly: it appears only while a session
+    /// needs a user decision (the same `hasManualAttentionIndicator` condition that
+    /// surfaces `BellIndicatorIcon`), and never once the panel is expanded.
+    private var showsWaitingGlow: Bool {
+        viewModel.status != .opened && hasManualAttentionIndicator
     }
 
     private var activeSessionCount: Int {
@@ -272,6 +275,9 @@ struct NotchView: View {
     private let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)
     private let closeAnimation = Animation.spring(response: 0.45, dampingFraction: 1.0, blendDuration: 0)
 
+    /// Warm orange used for the "waiting for input" breathing glow.
+    private let waitingGlowColor = Color(red: 1.0, green: 0.66, blue: 0.18)
+
     // MARK: - Body
 
     var body: some View {
@@ -292,6 +298,12 @@ struct NotchView: View {
                     .padding([.horizontal, .bottom], viewModel.status == .opened ? 12 : 0)
                     .background(.black)
                     .clipShape(currentNotchShape)
+                    .background(alignment: .center) {
+                        if showsWaitingGlow {
+                            BreathingNotchGlow(shape: currentNotchShape, color: waitingGlowColor)
+                                .transition(.opacity)
+                        }
+                    }
                     .overlay(alignment: .top) {
                         Rectangle()
                             .fill(.black)
@@ -313,6 +325,7 @@ struct NotchView: View {
                     .animation(.smooth, value: hasPendingPermission)
                     .animation(.smooth, value: hasHumanIntervention)
                     .animation(.smooth, value: hasCompletedReadyState)
+                    .animation(.smooth, value: showsWaitingGlow)
                     .animation(.spring(response: 0.3, dampingFraction: 0.5), value: isBouncing)
                     .contentShape(Rectangle())
                     .onHover { hovering in
@@ -1309,6 +1322,27 @@ private struct NotchCleanDeadSessionsButton: View {
                 isHovering = hovering
             }
         }
+    }
+}
+
+/// A soft, slowly pulsing halo that traces the pill silhouette. Sits behind the
+/// black notch so the color only bleeds out around the edges, reading as a glow.
+/// Used to flag that a session is waiting on the user.
+private struct BreathingNotchGlow: View {
+    let shape: NotchShape
+    let color: Color
+
+    @State private var breathing = false
+
+    var body: some View {
+        shape
+            .fill(color)
+            .blur(radius: breathing ? 16 : 9)
+            .opacity(breathing ? 0.9 : 0.4)
+            .scaleEffect(breathing ? 1.07 : 0.97)
+            .animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: breathing)
+            .onAppear { breathing = true }
+            .allowsHitTesting(false)
     }
 }
 

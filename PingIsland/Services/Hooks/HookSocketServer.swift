@@ -1160,7 +1160,10 @@ class HookSocketServer {
             pendingPermissions[toolUseId, default: []].append(pending)
             permissionsLock.unlock()
 
-            logger.debug("Keeping socket open for \(event.sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
+            logger.info("PermissionRequest queued session=\(event.sessionId.prefix(8), privacy: .public) tool=\(event.tool ?? "?", privacy: .public) toolUseId=\(toolUseId.prefix(12), privacy: .public) provider=\(event.provider.rawValue, privacy: .public)")
+            if SwarmDiagnostics.isEnabled {
+                SwarmDiagnostics.log("PERM-RECV", "session=\(event.sessionId.prefix(8)) tool=\(event.tool ?? "?") toolUseId=\(toolUseId.prefix(12)) provider=\(event.provider.rawValue)")
+            }
             eventHandler?(updatedEvent)
             return
         }
@@ -1190,10 +1193,15 @@ class HookSocketServer {
         permissionsLock.lock()
         guard let pendings = pendingPermissions.removeValue(forKey: toolUseId), !pendings.isEmpty else {
             permissionsLock.unlock()
-            logger.debug("No pending permission for toolUseId: \(toolUseId.prefix(12), privacy: .public)")
+            logger.info("No pending permission for toolUseId=\(toolUseId.prefix(12), privacy: .public) decision=\(decision, privacy: .public)")
             return
         }
         permissionsLock.unlock()
+        logger.info("PermissionResponse sending decision=\(decision, privacy: .public) toolUseId=\(toolUseId.prefix(12), privacy: .public) count=\(pendings.count, privacy: .public)")
+        if SwarmDiagnostics.isEnabled {
+            let sessionIds = pendings.map { $0.sessionId.prefix(8) }.joined(separator: ",")
+            SwarmDiagnostics.log("PERM-RESP", "decision=\(decision) toolUseId=\(toolUseId.prefix(12)) sessions=\(sessionIds)")
+        }
 
         for pending in pendings {
             recentInterventionResponses.record(

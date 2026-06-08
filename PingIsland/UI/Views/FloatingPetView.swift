@@ -92,12 +92,12 @@ struct FloatingPetView: View {
             // here, so without this the buddy would be silent on attention/completion).
             soundController.handle(instances)
             if SwarmDiagnostics.isEnabled {
-                SwarmDiagnostics.log("BUDDY-SNAP", "attn=\(attentionCount) expanded=\(isExpanded) | \(SwarmDiagnostics.summarize(instances))")
+                SwarmDiagnostics.log("BUDDY-SNAP", "attn=\(attentionCount) expanded=\(isExpanded) content=\(viewModel.contentType.id) | \(SwarmDiagnostics.summarize(instances))")
             }
         }
         .onChange(of: attentionCount) { oldValue, newValue in
             if SwarmDiagnostics.isEnabled {
-                SwarmDiagnostics.log("BUDDY-ATTN", "count \(oldValue)->\(newValue) expanded=\(isExpanded) willAutoExpand=\(newValue > 0 && !isExpanded)")
+                SwarmDiagnostics.log("BUDDY-ATTN", "count \(oldValue)->\(newValue) expanded=\(isExpanded) content=\(viewModel.contentType.id)")
             }
             // Auto-expand when a session newly needs attention (permission
             // request, AskUserQuestion, etc.) so the user doesn't have to
@@ -106,6 +106,9 @@ struct FloatingPetView: View {
                 // Switch to session list before expanding so the attention session
                 // is immediately visible rather than showing an unrelated chat.
                 if case .chat(let session) = viewModel.contentType, !session.needsManualAttention {
+                    if SwarmDiagnostics.isVerbose {
+                        SwarmDiagnostics.log("BUDDY-NAV", "expand: chat→instances session=\(session.sessionId.prefix(8)) attn=\(session.needsManualAttention)")
+                    }
                     viewModel.contentType = .instances
                 }
                 isExpanded = true
@@ -113,6 +116,9 @@ struct FloatingPetView: View {
                 // Already expanded: if showing a chat for a session that doesn't need
                 // attention, surface the list so the new attention session is visible.
                 if case .chat(let session) = viewModel.contentType, !session.needsManualAttention {
+                    if SwarmDiagnostics.isVerbose {
+                        SwarmDiagnostics.log("BUDDY-NAV", "already-open: chat→instances session=\(session.sessionId.prefix(8)) attn=\(session.needsManualAttention)")
+                    }
                     viewModel.contentType = .instances
                 }
             } else if newValue == 0 {

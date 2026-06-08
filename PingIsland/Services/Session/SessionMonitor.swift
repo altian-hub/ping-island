@@ -423,7 +423,9 @@ class SessionMonitor: ObservableObject {
     private func refreshVisibleSessions() {
         let visibleSessions = filteredVisibleSessions(from: allSessions)
         if SwarmDiagnostics.isEnabled {
-            SwarmDiagnostics.log("PUBLISH", SwarmDiagnostics.summarize(visibleSessions))
+            let summary = SwarmDiagnostics.summarize(visibleSessions)
+            let attnCount = visibleSessions.filter { $0.needsManualAttention }.count
+            SwarmDiagnostics.log("PUBLISH", "attn=\(attnCount) | \(summary)")
         }
         instances = visibleSessions
         pendingInstances = visibleSessions.filter { $0.needsAttention }
@@ -432,8 +434,30 @@ class SessionMonitor: ObservableObject {
     private func filteredVisibleSessions(from sessions: [SessionState]) -> [SessionState] {
         let visibilityMode = AppSettings.subagentVisibilityMode
         let primaryVisibleSessions = sessions.filter {
-            !$0.shouldHideFromPrimaryUI && $0.shouldDisplaySubagent(in: visibilityMode)
+            // A session needing manual attention bypasses the subagent visibility
+            // mode filter so a permission prompt or question is never silently
+            // swallowed because the user hid that subagent category.
+            !$0.shouldHideFromPrimaryUI
+                && ($0.shouldDisplaySubagent(in: visibilityMode) || $0.needsManualAttention)
         }
+        #if DEBUG
+        let dropped = sessions.filter { s in
+            !primaryVisibleSessions.contains { $0.sessionId == s.sessionId }
+        }
+        let droppedAttention = dropped.filter { $0.needsManualAttention }
+        if !droppedAttention.isEmpty {
+            let desc = droppedAttention
+                .map { SwarmDiagnostics.describeHide($0, visibilityMode: visibilityMode) }
+                .joined(separator: " | ")
+            SwarmDiagnostics.logFilterWarning("ATTENTION sessions filtered: \(desc)")
+        }
+        if SwarmDiagnostics.isVerbose, !dropped.isEmpty {
+            let desc = dropped
+                .map { SwarmDiagnostics.describeHide($0, visibilityMode: visibilityMode) }
+                .joined(separator: " | ")
+            SwarmDiagnostics.log("FILTER", "dropped \(dropped.count): \(desc)")
+        }
+        #endif
         return primaryVisibleSessions.filter { candidate in
             !primaryVisibleSessions.contains { other in
                 candidate.shouldHideAsDuplicateCodexPlaceholder(comparedTo: other)

@@ -475,28 +475,21 @@ private enum BridgeRuntimeMode: String {
 }
 
 private enum SocketClient {
+    /// Connect attempts for response-expecting hooks (permission / question prompts).
+    /// PingIsland may be mid-relaunch when a prompt fires, and a dropped event is never
+    /// retried — Claude just falls back to the in-terminal prompt and the app never
+    /// learns the session is blocked. Polling the socket for a bounded window (~10s)
+    /// rides out a restart blackout. Fire-and-forget state hooks use a single attempt
+    /// so they never delay the calling CLI when Island is genuinely down.
+    private static let responseConnectAttempts = 100
+    private static let connectRetryIntervalMicroseconds: UInt32 = 100_000
+
     static func send(envelope: BridgeEnvelope, socketPath: String) throws -> BridgeResponse {
-        let fd = socket(AF_UNIX, islandStreamSocketType, 0)
-        guard fd >= 0 else {
-            throw BridgeError.connectionFailed
-        }
+        let fd = try openConnection(
+            toSocketPath: socketPath,
+            maxAttempts: envelope.expectsResponse ? responseConnectAttempts : 1
+        )
         defer { close(fd) }
-
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let utf8 = socketPath.utf8CString.map(UInt8.init(bitPattern:))
-        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
-            buffer.copyBytes(from: utf8)
-        }
-
-        let result = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard result == 0 else {
-            throw BridgeError.connectionFailed
-        }
 
         let data = try BridgeCodec.encodeEnvelope(envelope)
         _ = data.withUnsafeBytes { buffer in
@@ -510,6 +503,42 @@ private enum SocketClient {
             return BridgeResponse(requestID: envelope.id)
         }
         return try BridgeCodec.decodeResponse(Data(buffer.prefix(count)))
+    }
+
+    /// Open a connected socket to `socketPath`, retrying the connect up to
+    /// `maxAttempts` times (100ms apart) to survive a brief PingIsland restart
+    /// blackout. Returns the connected fd; the caller owns closing it.
+    private static func openConnection(toSocketPath socketPath: String, maxAttempts: Int) throws -> Int32 {
+        var attempt = 0
+        while true {
+            let fd = socket(AF_UNIX, islandStreamSocketType, 0)
+            guard fd >= 0 else {
+                throw BridgeError.connectionFailed
+            }
+
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            let utf8 = socketPath.utf8CString.map(UInt8.init(bitPattern:))
+            withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+                buffer.copyBytes(from: utf8)
+            }
+
+            let result = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            if result == 0 {
+                return fd
+            }
+
+            close(fd)
+            attempt += 1
+            if attempt >= maxAttempts {
+                throw BridgeError.connectionFailed
+            }
+            usleep(connectRetryIntervalMicroseconds)
+        }
     }
 }
 

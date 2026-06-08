@@ -506,6 +506,11 @@ struct NotchView: View {
                         ZStack {
                             if hasManualAttentionIndicator {
                                 BellIndicatorIcon(size: 12, color: closedIndicatorTone.emphasisColor)
+                            } else if hasCompletedReadyState {
+                                // A finished turn ("waiting for your next message") is a
+                                // quiet "done / your move" state — show the ready checkmark
+                                // rather than the alarm bell.
+                                ReadyForInputIndicatorIcon(size: 12, color: TerminalColors.green)
                             } else if activeSessionCount > 0 {
                                 SessionCountIndicator(count: activeSessionCount)
                             }

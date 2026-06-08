@@ -186,9 +186,18 @@ struct SessionState: Equatable, Identifiable, Sendable {
         phase.needsAttention || intervention != nil
     }
 
-    /// Whether this session should be surfaced before active/background work.
+    /// Whether this session needs an *urgent* human decision right now — a pending
+    /// permission/approval or an interactive intervention (e.g. AskUserQuestion).
+    ///
+    /// Deliberately EXCLUDES the "turn complete, waiting for your next message" state
+    /// (`.waitingForInput` with no intervention). That idle hand-back is not something
+    /// Claude is blocked on — it's just done — so it must not ring the attention bell,
+    /// bump the attention count, auto-expand the buddy, or sort above active work.
+    /// It is surfaced instead by the quieter completion path
+    /// (`SessionCompletionStateEvaluator.isCompletedReadySession` → green checkmark +
+    /// `.taskCompleted` chime). This mirrors the sound evaluator's `isAttention`.
     nonisolated var needsManualAttention: Bool {
-        needsAttention
+        phase.isWaitingForApproval || intervention != nil
     }
 
     /// The active permission context, if any
@@ -389,12 +398,15 @@ struct SessionState: Equatable, Identifiable, Sendable {
             return true
         }
 
-        if isLikelyClaudeAuxiliaryTitleGenForUI {
-            return true
-        }
-
+        // Always surface sessions that need a user decision regardless of
+        // any classification heuristic below — the title-gen and phantom
+        // checks must never silently hide a live permission prompt or question.
         if needsManualAttention {
             return false
+        }
+
+        if isLikelyClaudeAuxiliaryTitleGenForUI {
+            return true
         }
 
         return isLikelyEmptyClaudePlaceholderForUI

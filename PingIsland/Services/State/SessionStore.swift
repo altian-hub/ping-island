@@ -1264,12 +1264,30 @@ actor SessionStore {
         toolResults: [String: ConversationParser.ToolResult],
         structuredResults: [String: ToolResultData]
     ) async {
+        let gatedToolUseId = session.activePermission?.toolUseId
         for item in session.chatItems {
             guard case .toolCall(let tool) = item.type else { continue }
 
             // Only emit for tools that are running or waiting but have results in JSONL
             guard tool.status == .running || tool.status == .waitingForApproval else { continue }
             guard completedToolIds.contains(item.id) else { continue }
+
+            // Never let transcript completion-inference resolve the tool the user is
+            // actively being prompted to approve. The JSONL parser can mis-attribute a
+            // sibling shell's result to the gated tool mid-burst; if we emit .toolCompleted
+            // for it, processToolCompleted flips the phase off waitingForApproval and the
+            // live prompt flashes for a frame then vanishes. A genuinely-approved tool
+            // clears authoritatively via its real PostToolUse hook (fired after the user
+            // responds), at which point it is no longer the activePermission.
+            if let gatedToolUseId, item.id == gatedToolUseId {
+                if SwarmDiagnostics.isEnabled {
+                    SwarmDiagnostics.log(
+                        "MASK-GUARD",
+                        "session=\(sessionId.prefix(8)) transcript-complete suppressed for gated=\(item.id.prefix(12))"
+                    )
+                }
+                continue
+            }
 
             let result = ToolCompletionResult.from(
                 parserResult: toolResults[item.id],

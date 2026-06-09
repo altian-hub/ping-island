@@ -764,11 +764,22 @@ actor SessionStore {
                 if session.phase.canTransition(to: .processing) {
                     session.phase = .processing
                 }
-            } else if case .waitingForApproval = session.phase {
-                // The approved tool wasn't the one in phase context, but no others pending
-                // This can happen if tools were approved out of order
-                if session.phase.canTransition(to: .processing) {
-                    session.phase = .processing
+            } else if case .waitingForApproval(let ctx) = session.phase {
+                // The approved tool is NOT the one the phase is tracking, so that tracked
+                // tool is still waiting on the user. `findNextPendingTool` only sees tools
+                // whose chatItems have synced — during a multi-shell burst a sibling's
+                // tool-call item lags, so it reports "none pending" even though `ctx` still
+                // is. Dropping to .processing here masks the live prompt (it flashes for a
+                // frame then vanishes). Stay in waitingForApproval for the tracked tool; it
+                // clears when that tool itself resolves.
+                Self.logger.debug(
+                    "Approved \(toolUseId.prefix(12), privacy: .public) but phase still tracks pending \(ctx.toolUseId.prefix(12), privacy: .public); preserving waitingForApproval"
+                )
+                if SwarmDiagnostics.isEnabled {
+                    SwarmDiagnostics.log(
+                        "MASK-GUARD",
+                        "session=\(sessionId.prefix(8)) approved=\(toolUseId.prefix(12)) kept-pending=\(ctx.toolUseId.prefix(12))"
+                    )
                 }
             }
         }

@@ -89,6 +89,41 @@ final class ClaudeSubagentSwarmApprovalTests: XCTestCase {
         XCTAssertEqual(session?.activePermission?.toolUseId, "read-C")
     }
 
+    /// Approving ONE sibling subagent's tool must not collapse the session out of
+    /// `.waitingForApproval` while a DIFFERENT subagent's prompt is still pending.
+    ///
+    /// Real-world trace (d05bfb70, AI-video-studio, "3 shells still running"): the
+    /// pending prompt `toolu_018Ruw` surfaced for <1s, then a sibling shell's approval
+    /// fired `processPermissionApproved` for a different toolUseId. `findNextPendingTool`
+    /// scans chatItems, but the pending tool's call hadn't synced there yet, so it
+    /// reported "none pending" and the else-branch flipped the phase to `.processing`,
+    /// masking the live prompt (no PERM-RESP ever followed). The phase context still
+    /// names the pending tool, so we must trust it and stay waiting.
+    func testApprovingSiblingDoesNotMaskDifferentPendingApproval() async {
+        let sessionId = "claude-swarm-sibling-\(UUID().uuidString)"
+        let store = SessionStore.shared
+        defer { Task { await store.process(.sessionArchived(sessionId: sessionId)) } }
+
+        await store.process(.hookReceived(toolEvent(sessionId, "PreToolUse", "running_tool", "Agent", "agent-1")))
+
+        // Subagent A: full PreToolUse + PermissionRequest, so its tool-call anchors in chatItems.
+        await store.process(.hookReceived(readEvent(sessionId, "PreToolUse", "running_tool", "read-A", "/repo/src/a.cpp")))
+        await store.process(.hookReceived(readEvent(sessionId, "PermissionRequest", "waiting_for_approval", "read-A", "/repo/src/a.cpp")))
+
+        // Subagent B: only the PermissionRequest arrives (its PreToolUse hasn't synced to
+        // chatItems yet — the burst race). Phase now tracks read-B.
+        await store.process(.hookReceived(readEvent(sessionId, "PermissionRequest", "waiting_for_approval", "read-B", "/repo/src/b.cpp")))
+
+        // Approve the OTHER pending tool (read-A). read-B is still genuinely pending.
+        await store.process(.permissionApproved(sessionId: sessionId, toolUseId: "read-A"))
+
+        let session = await store.session(for: sessionId)
+        XCTAssertEqual(session?.phase.isWaitingForApproval, true,
+                       "Approving read-A must not mask the still-pending read-B prompt")
+        XCTAssertEqual(session?.needsApprovalResponse, true)
+        XCTAssertEqual(session?.activePermission?.toolUseId, "read-B")
+    }
+
     // MARK: - Helpers
 
     private func toolEvent(

@@ -34,14 +34,54 @@ actor ConversationParser {
     /// Logger for conversation parser (nonisolated static for cross-context access)
     nonisolated static let logger = Logger(subsystem: "com.wudanwu.pingisland", category: "Parser")
 
-    /// Cache of parsed conversation info, keyed by session file path
+    /// Cache of parsed conversation info, keyed by session file path.
+    /// Used for the openClaw format, which is re-parsed in full on change.
     private var cache: [String: CachedInfo] = [:]
 
     private var incrementalState: [String: IncrementalParseState] = [:]
 
+    /// Tail-incremental conversation-info state for claude-like transcripts,
+    /// keyed by session file path. Avoids re-reading the whole (potentially
+    /// tens-of-MB) file on every append: we fold only the newly written bytes
+    /// into a running accumulator.
+    private var infoState: [String: IncrementalInfoState] = [:]
+
     private struct CachedInfo {
         let modificationDate: Date
         let info: ConversationInfo
+    }
+
+    private struct IncrementalInfoState {
+        var lastOffset: UInt64
+        var modificationDate: Date
+        var accumulator: ConversationInfoAccumulator
+    }
+
+    /// Running, append-only view of the fields that make up `ConversationInfo`.
+    /// Folding lines in file order yields the same result as the original
+    /// forward(firstUserMessage)+backward(lastMessage/summary/date) scan:
+    /// `firstUserMessage` sticks to the first match, every other field keeps
+    /// the most recently seen value (i.e. the last occurrence in the file).
+    private struct ConversationInfoAccumulator {
+        var summary: String?
+        var lastMessage: String?
+        var lastMessageRole: String?
+        var lastToolName: String?
+        var firstUserMessage: String?
+        var lastUserMessageDate: Date?
+        var isTitleGenerationPrompt = false
+
+        var info: ConversationInfo {
+            ConversationInfo(
+                summary: summary,
+                lastMessage: ConversationParser.truncateMessage(lastMessage, maxLength: 80),
+                lastMessageRole: lastMessageRole,
+                lastToolName: lastToolName,
+                firstUserMessage: firstUserMessage,
+                lastUserMessageDate: lastUserMessageDate,
+                isTitleGenerationPrompt: isTitleGenerationPrompt
+            )
+        }
     }
 
     /// State for incremental JSONL parsing
@@ -93,132 +133,170 @@ actor ConversationParser {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: sessionFile),
               let attrs = try? fileManager.attributesOfItem(atPath: sessionFile),
-              let modDate = attrs[.modificationDate] as? Date else {
+              let modDate = attrs[.modificationDate] as? Date,
+              let fileSize = (attrs[.size] as? NSNumber)?.uint64Value else {
             return ConversationInfo(summary: nil, lastMessage: nil, lastMessageRole: nil, lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil)
         }
 
-        if let cached = cache[sessionFile], cached.modificationDate == modDate {
-            return cached.info
+        // openClaw transcripts have no append-only offset semantics here; keep
+        // the simple "re-read whole file when modDate changes" cache for them.
+        if transcriptFormat == .openClaw {
+            if let cached = cache[sessionFile], cached.modificationDate == modDate {
+                return cached.info
+            }
+            guard let data = fileManager.contents(atPath: sessionFile),
+                  let content = String(data: data, encoding: .utf8) else {
+                return ConversationInfo(summary: nil, lastMessage: nil, lastMessageRole: nil, lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil)
+            }
+            let info = parseOpenClawContent(content)
+            cache[sessionFile] = CachedInfo(modificationDate: modDate, info: info)
+            return info
         }
 
-        guard let data = fileManager.contents(atPath: sessionFile),
+        return parseClaudeLikeIncrementally(sessionFile: sessionFile, modDate: modDate, fileSize: fileSize)
+    }
+
+    /// Maintain a running `ConversationInfo` for a claude-like transcript by
+    /// folding in only the bytes appended since the last call, instead of
+    /// re-reading and re-parsing the entire file on every change.
+    private func parseClaudeLikeIncrementally(sessionFile: String, modDate: Date, fileSize: UInt64) -> ConversationInfo {
+        if var state = infoState[sessionFile] {
+            // Unchanged file: serve the cached running view.
+            if state.modificationDate == modDate {
+                return state.accumulator.info
+            }
+
+            // Truncated/rotated (e.g. a brand-new session reusing the path):
+            // drop the stale state and fall through to a cold full parse.
+            if fileSize >= state.lastOffset {
+                if fileSize > state.lastOffset,
+                   let newData = Self.readData(at: sessionFile, from: state.lastOffset),
+                   let boundary = Self.lastNewlineIndex(in: newData) {
+                    // Only consume up to the last complete line; a partially
+                    // written trailing line is picked up on the next call.
+                    let completeData = newData[..<boundary]
+                    if let chunk = String(data: completeData, encoding: .utf8) {
+                        let formatter = Self.makeISO8601Formatter()
+                        for line in chunk.components(separatedBy: "\n") where !line.isEmpty {
+                            Self.accumulate(line: line, into: &state.accumulator, formatter: formatter)
+                        }
+                    }
+                    state.lastOffset += UInt64(completeData.count)
+                }
+                state.modificationDate = modDate
+                infoState[sessionFile] = state
+                return state.accumulator.info
+            }
+        }
+
+        // Cold start (or post-truncation): full parse, recording the offset so
+        // subsequent calls only read the tail.
+        guard let data = FileManager.default.contents(atPath: sessionFile),
               let content = String(data: data, encoding: .utf8) else {
             return ConversationInfo(summary: nil, lastMessage: nil, lastMessageRole: nil, lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil)
         }
 
-        let info = switch transcriptFormat {
-        case .claudeLike:
-            parseContent(content)
-        case .openClaw:
-            parseOpenClawContent(content)
+        var accumulator = ConversationInfoAccumulator()
+        let formatter = Self.makeISO8601Formatter()
+        for line in content.components(separatedBy: "\n") where !line.isEmpty {
+            Self.accumulate(line: line, into: &accumulator, formatter: formatter)
         }
-        cache[sessionFile] = CachedInfo(modificationDate: modDate, info: info)
-
-        return info
+        infoState[sessionFile] = IncrementalInfoState(
+            lastOffset: fileSize,
+            modificationDate: modDate,
+            accumulator: accumulator
+        )
+        return accumulator.info
     }
 
-    /// Parse JSONL content
-    private func parseContent(_ content: String) -> ConversationInfo {
-        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+    /// Read from `offset` to end of file as raw bytes (nil on any failure).
+    private static func readData(at path: String, from offset: UInt64) -> Data? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: offset)
+            return try handle.readToEnd()
+        } catch {
+            return nil
+        }
+    }
 
-        var summary: String?
-        var lastMessage: String?
-        var lastMessageRole: String?
-        var lastToolName: String?
-        var firstUserMessage: String?
-        var lastUserMessageDate: Date?
-        var isTitleGenerationPrompt = false
+    /// Index one past the last newline (0x0A) — i.e. the exclusive upper bound
+    /// of the complete-line prefix. Nil when `data` holds no newline yet.
+    private static func lastNewlineIndex(in data: Data) -> Int? {
+        guard let last = data.lastIndex(of: 0x0A) else { return nil }
+        return data.distance(from: data.startIndex, to: last) + 1
+    }
 
+    private static func makeISO8601Formatter() -> ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }
 
-        for line in lines {
-            guard let lineData = line.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
-                continue
-            }
-
-            let type = json["type"] as? String
-            let isMeta = json["isMeta"] as? Bool ?? false
-
-            if type == "user" && !isMeta {
-                if let message = json["message"] as? [String: Any],
-                   let msgContent = Self.firstDisplayText(in: message) {
-                    // Detect on the full, untruncated text — the title-gen markers
-                    // sit past the 50-char cut applied to firstUserMessage.
-                    isTitleGenerationPrompt = Self.isClaudeTitleGenerationPrompt(msgContent)
-                    firstUserMessage = Self.truncateMessage(msgContent, maxLength: 50)
-                    break
-                }
-            }
+    /// Fold one JSONL line into the running conversation-info accumulator.
+    ///
+    /// Applied in file order, this reproduces the original two-pass scan
+    /// (forward for `firstUserMessage`, backward for everything else):
+    /// `firstUserMessage`/`isTitleGenerationPrompt` stick to the first
+    /// displayable user message, while `summary`, `lastMessage`/role/tool and
+    /// `lastUserMessageDate` always reflect the most recent matching line —
+    /// which is exactly what "last write wins" yields on a forward pass.
+    private static func accumulate(
+        line: String,
+        into acc: inout ConversationInfoAccumulator,
+        formatter: ISO8601DateFormatter
+    ) {
+        guard let lineData = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+            return
         }
 
-        var foundLastUserMessage = false
-        for line in lines.reversed() {
-            guard let lineData = line.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
-                continue
-            }
+        let type = json["type"] as? String
 
-            let type = json["type"] as? String
+        if type == "summary", let summaryText = json["summary"] as? String {
+            acc.summary = summaryText
+            return
+        }
 
-            if lastMessage == nil {
-                if type == "user" || type == "assistant" {
-                    let isMeta = json["isMeta"] as? Bool ?? false
-                    if !isMeta, let message = json["message"] as? [String: Any] {
-                        for block in Self.contentBlocks(in: message).reversed() {
-                            let blockType = block["type"] as? String
-                            if blockType == "tool_use" {
-                                let toolName = block["name"] as? String ?? "Tool"
-                                let toolInput = Self.formatToolInput(block["input"] as? [String: Any], toolName: toolName)
-                                lastMessage = toolInput
-                                lastMessageRole = "tool"
-                                lastToolName = toolName
-                                break
-                            } else if blockType == "text",
-                                      let text = block["text"] as? String,
-                                      let sanitizedText = SessionTextSanitizer.sanitizedDisplayText(text),
-                                      Self.isDisplayableText(sanitizedText),
-                                      !sanitizedText.hasPrefix("[Request interrupted by user") {
-                                lastMessage = sanitizedText
-                                lastMessageRole = type
-                                break
-                            }
-                        }
-                    }
-                }
-            }
+        guard type == "user" || type == "assistant" else { return }
+        let isMeta = json["isMeta"] as? Bool ?? false
+        guard !isMeta, let message = json["message"] as? [String: Any] else { return }
 
-            if !foundLastUserMessage && type == "user" {
-                let isMeta = json["isMeta"] as? Bool ?? false
-                if !isMeta, let message = json["message"] as? [String: Any] {
-                    if Self.firstDisplayText(in: message) != nil {
-                        if let timestampStr = json["timestamp"] as? String {
-                            lastUserMessageDate = formatter.date(from: timestampStr)
-                        }
-                        foundLastUserMessage = true
-                    }
-                }
-            }
+        // First displayable user message: title fallback + title-gen detection.
+        // Detect on the full, untruncated text — the title-gen markers sit past
+        // the 50-char cut applied to firstUserMessage.
+        if type == "user", acc.firstUserMessage == nil,
+           let msgContent = firstDisplayText(in: message) {
+            acc.isTitleGenerationPrompt = isClaudeTitleGenerationPrompt(msgContent)
+            acc.firstUserMessage = truncateMessage(msgContent, maxLength: 50)
+        }
 
-            if summary == nil, type == "summary", let summaryText = json["summary"] as? String {
-                summary = summaryText
-            }
-
-            if summary != nil && lastMessage != nil && foundLastUserMessage {
+        // The last displayable block of this message becomes lastMessage.
+        for block in contentBlocks(in: message).reversed() {
+            let blockType = block["type"] as? String
+            if blockType == "tool_use" {
+                let toolName = block["name"] as? String ?? "Tool"
+                acc.lastMessage = formatToolInput(block["input"] as? [String: Any], toolName: toolName)
+                acc.lastMessageRole = "tool"
+                acc.lastToolName = toolName
+                break
+            } else if blockType == "text",
+                      let text = block["text"] as? String,
+                      let sanitizedText = SessionTextSanitizer.sanitizedDisplayText(text),
+                      isDisplayableText(sanitizedText),
+                      !sanitizedText.hasPrefix("[Request interrupted by user") {
+                acc.lastMessage = sanitizedText
+                acc.lastMessageRole = type
+                acc.lastToolName = nil
                 break
             }
         }
 
-        return ConversationInfo(
-            summary: summary,
-            lastMessage: Self.truncateMessage(lastMessage, maxLength: 80),
-            lastMessageRole: lastMessageRole,
-            lastToolName: lastToolName,
-            firstUserMessage: firstUserMessage,
-            lastUserMessageDate: lastUserMessageDate,
-            isTitleGenerationPrompt: isTitleGenerationPrompt
-        )
+        // Most recent user message with displayable text drives the sort date.
+        if type == "user", firstDisplayText(in: message) != nil {
+            acc.lastUserMessageDate = (json["timestamp"] as? String).flatMap { formatter.date(from: $0) }
+        }
     }
 
     /// Claude Code spawns a throwaway helper session to title each conversation. Its only

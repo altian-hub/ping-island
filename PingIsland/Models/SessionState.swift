@@ -935,7 +935,12 @@ struct SessionState: Equatable, Identifiable, Sendable {
 
     /// Whether this session recently completed and should still appear in hover previews.
     nonisolated var isRecentlyCompleted: Bool {
-        guard phase == .ended || phase == .idle else { return false }
+        // `.ended` is a real completion for any provider; `.idle` only counts as
+        // "completed" for Codex (whose finished turns settle as `.idle` rather than
+        // `.waitingForInput`), matching `SessionCompletionStateEvaluator`'s Codex
+        // idle-completion rule. Other providers' `.idle` is not a completion.
+        let isCompletionPhase = phase == .ended || (phase == .idle && provider == .codex)
+        guard isCompletionPhase else { return false }
         return Date().timeIntervalSince(lastActivity) < Self.minimalCompactDelay
     }
 

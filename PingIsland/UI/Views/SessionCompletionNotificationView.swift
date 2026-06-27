@@ -135,8 +135,9 @@ enum SessionCompletionNotificationPolicy {
     /// A previously-tracked session can re-enter a completed/ended phase long after it
     /// actually finished — a stale app-server snapshot, or a re-imported historical
     /// thread. Only surface a notification when the session was active within this
-    /// window, so stale transitions can't requeue alerts. Mirrors upstream's 60s window.
-    static let notificationRecencyWindow: TimeInterval = 60
+    /// window, so stale transitions can't requeue alerts. Shares the single upstream
+    /// 60s window with `SessionCompletionStateEvaluator.codexIdleCompletionFreshnessWindow`.
+    static let notificationRecencyWindow = SessionCompletionStateEvaluator.codexIdleCompletionFreshnessWindow
 
     static func shouldQueueCompletedNotification(
         for session: SessionState,

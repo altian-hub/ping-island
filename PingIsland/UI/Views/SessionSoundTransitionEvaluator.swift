@@ -39,13 +39,16 @@ struct SessionSoundTransitionEvaluator {
     }
 
     private static func isAttention(_ session: SessionState) -> Bool {
-        // Auto-approve sessions resolve their own prompts; don't ring for them.
+        // A question (AskUserQuestion / `request_user_input`) is never auto-resolved —
+        // auto-approve only answers permission prompts — so it must ring even for
+        // auto-approve sessions, else the session silently stalls on the question.
+        // Use the explicit question signal rather than gating on `.waitingForInput`:
+        // Codex can surface a question while the app-server snapshot still reports
+        // `.processing`, so a phase-gated check would miss the attention cue.
+        if session.needsQuestionResponse { return true }
+        // Auto-approve sessions resolve their own approval prompts; don't ring for those.
         guard !session.autoApprovePermissions else { return false }
-        // Use the explicit question/approval signals rather than gating on
-        // `.waitingForInput`: Codex can surface a `request_user_input` question
-        // while the app-server snapshot still reports `.processing`, so a
-        // phase-gated check would miss the attention cue.
-        return session.needsApprovalResponse || session.needsQuestionResponse
+        return session.needsApprovalResponse
     }
 
     private static func errorToolKeys(_ session: SessionState) -> [String] {
@@ -118,7 +121,18 @@ struct SessionSoundTransitionEvaluator {
 
         previousProcessingIds = newProcessingIds
         previousAttentionSoundIds = newAttentionIds
-        previousCompletionSoundIds = newCompletedIds
+        // Keep sessions that already fired their completion sound "claimed" while they
+        // stay quiescent (`.idle`/`.ended`, i.e. haven't started a new turn). Otherwise
+        // a Codex idle session that ages out of the 60s completion-freshness window and
+        // is later re-reported with a fresh `lastActivity` (same finished turn, via a
+        // `thread/list` re-poll) would re-enter the completed set and replay the sound.
+        // A genuinely new turn passes through `.processing`, dropping the claim so its
+        // next completion fires normally. Intersect with present sessions so departed
+        // ids don't accumulate.
+        let stillQuiescentClaimedIds = previousCompletionSoundIds.intersection(
+            Set(instances.filter { $0.phase == .idle || $0.phase == .ended }.map(\.stableId))
+        )
+        previousCompletionSoundIds = newCompletedIds.union(stillQuiescentClaimedIds)
         previousTaskErrorIds = newTaskErrorIds
         previousResourceLimitIds = newResourceLimitIds
 

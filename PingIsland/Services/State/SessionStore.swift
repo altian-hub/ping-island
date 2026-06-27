@@ -2180,17 +2180,26 @@ actor SessionStore {
         // Start a file watcher for Codex sessions discovered via the App Server
         // (hook-based sessions already get watchers via processHookEvent). Without
         // this, sessions from non-official API providers never get watched.
-        if session.phase == .processing || session.phase == .waitingForInput || session.phase.isWaitingForApproval {
-            let watcherSessionId = resolvedSessionId
-            let watcherCwd = session.cwd
-            let watcherFilePath = session.clientInfo.sessionFilePath
-            Task { @MainActor in
-                InterruptWatcherManager.shared.startWatching(
-                    sessionId: watcherSessionId,
-                    cwd: watcherCwd,
-                    explicitFilePath: watcherFilePath
-                )
-            }
+        startCodexInterruptWatcherIfActive(for: session, resolvedSessionId: resolvedSessionId)
+    }
+
+    /// Starts a JSONL interrupt watcher for an actively-working Codex session discovered
+    /// via the App Server (hook-ingress sessions already get watchers in `processHookEvent`).
+    private func startCodexInterruptWatcherIfActive(for session: SessionState, resolvedSessionId: String) {
+        guard session.phase == .processing
+            || session.phase == .waitingForInput
+            || session.phase.isWaitingForApproval else {
+            return
+        }
+        let watcherSessionId = resolvedSessionId
+        let watcherCwd = session.cwd
+        let watcherFilePath = session.clientInfo.sessionFilePath
+        Task { @MainActor in
+            InterruptWatcherManager.shared.startWatching(
+                sessionId: watcherSessionId,
+                cwd: watcherCwd,
+                explicitFilePath: watcherFilePath
+            )
         }
     }
 
@@ -2322,18 +2331,8 @@ actor SessionStore {
 
         // Start a file watcher for App-Server-discovered Codex sessions (hook-ingress
         // snapshots already get watchers via processHookEvent).
-        if ingress != .hookBridge,
-           session.phase == .processing || session.phase == .waitingForInput || session.phase.isWaitingForApproval {
-            let watcherSessionId = resolvedSessionId
-            let watcherCwd = session.cwd
-            let watcherFilePath = session.clientInfo.sessionFilePath
-            Task { @MainActor in
-                InterruptWatcherManager.shared.startWatching(
-                    sessionId: watcherSessionId,
-                    cwd: watcherCwd,
-                    explicitFilePath: watcherFilePath
-                )
-            }
+        if ingress != .hookBridge {
+            startCodexInterruptWatcherIfActive(for: session, resolvedSessionId: resolvedSessionId)
         }
     }
 

@@ -373,17 +373,18 @@ private enum BridgeDebugLogger {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(record)
 
-        // Bound the debug directory before appending so append-only hook traffic can't
-        // grow ~/.ping-island-debug into multi-gigabyte local state. Prune the bounding
-        // root (recursive across per-target subdirs), excluding today's active file.
-        let pruneRoot = debugRootDirectory(for: target, environment: environment)
-        try? BridgeDebugLogPruner.prune(
-            directory: pruneRoot,
-            policy: .default,
-            excludingFileNames: [fileURL.lastPathComponent]
-        )
-
         if !fileManager.fileExists(atPath: fileURL.path) {
+            // First write to today's dated file (day roll). Bound the debug directory
+            // here rather than on every append, so append-only hook traffic doesn't
+            // re-walk the whole tree per event. Prune the bounding root (recursive
+            // across per-target subdirs); today's active file is counted toward the
+            // size cap but never deleted.
+            let pruneRoot = debugRootDirectory(for: target, environment: environment)
+            try? BridgeDebugLogPruner.prune(
+                directory: pruneRoot,
+                policy: .default,
+                excludingFileNames: [fileURL.lastPathComponent]
+            )
             fileManager.createFile(atPath: fileURL.path, contents: nil)
         }
 
@@ -426,28 +427,32 @@ private enum BridgeDebugLogger {
     }
 
     private static func debugDirectory(for target: String, environment: [String: String]) -> URL {
-        if target == "codex-hooks",
-           let customPath = environment["PING_ISLAND_CODEX_HOOK_DEBUG_DIR"],
-           !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return URL(fileURLWithPath: NSString(string: customPath).expandingTildeInPath, isDirectory: true)
+        if let customDir = customCodexDebugDirectory(for: target, environment: environment) {
+            return customDir
         }
-
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".ping-island-debug", isDirectory: true)
-            .appendingPathComponent(target, isDirectory: true)
+        return defaultDebugRoot().appendingPathComponent(target, isDirectory: true)
     }
 
     /// The directory to bound when pruning: a custom Codex debug dir holds its own
     /// files directly, while the default layout nests per-target subdirs under
     /// ~/.ping-island-debug, so prune that shared root to cap the whole tree.
     private static func debugRootDirectory(for target: String, environment: [String: String]) -> URL {
-        if target == "codex-hooks",
-           let customPath = environment["PING_ISLAND_CODEX_HOOK_DEBUG_DIR"],
-           !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return URL(fileURLWithPath: NSString(string: customPath).expandingTildeInPath, isDirectory: true)
-        }
+        customCodexDebugDirectory(for: target, environment: environment) ?? defaultDebugRoot()
+    }
 
-        return FileManager.default.homeDirectoryForCurrentUser
+    /// A user-overridden Codex hook debug directory (holds its files directly, with no
+    /// per-target nesting), or nil when unset or the target isn't Codex.
+    private static func customCodexDebugDirectory(for target: String, environment: [String: String]) -> URL? {
+        guard target == "codex-hooks",
+              let customPath = environment["PING_ISLAND_CODEX_HOOK_DEBUG_DIR"],
+              !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: NSString(string: customPath).expandingTildeInPath, isDirectory: true)
+    }
+
+    private static func defaultDebugRoot() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".ping-island-debug", isDirectory: true)
     }
 

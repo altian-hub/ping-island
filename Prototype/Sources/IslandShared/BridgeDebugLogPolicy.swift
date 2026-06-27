@@ -86,37 +86,41 @@ public enum BridgeDebugLogPruner {
         var entries = try debugLogFiles(
             in: directory,
             fileManager: fileManager,
-            excludingFileNames: excludingFileNames
+            protectedFileNames: excludingFileNames
         )
 
         guard policy.isEnabled else {
-            for entry in entries {
+            for entry in entries where !entry.isProtected {
                 try? fileManager.removeItem(at: entry.url)
             }
             return
         }
 
         let cutoffDate = now.addingTimeInterval(-Double(policy.retentionDays) * 86_400)
-        for entry in entries where entry.modifiedAt < cutoffDate {
+        for entry in entries where !entry.isProtected && entry.modifiedAt < cutoffDate {
             try? fileManager.removeItem(at: entry.url)
         }
 
         entries.removeAll { entry in
-            entry.modifiedAt < cutoffDate || !fileManager.fileExists(atPath: entry.url.path)
+            !entry.isProtected && (entry.modifiedAt < cutoffDate || !fileManager.fileExists(atPath: entry.url.path))
         }
 
+        // Count protected (active) files toward the cap so a bloated active file still
+        // forces the other files to be pruned — but never delete a protected file.
         var totalBytes = entries.reduce(Int64(0)) { partial, entry in
             partial + entry.sizeBytes
         }
 
         guard totalBytes > policy.maxDirectoryBytes else { return }
 
-        for entry in entries.sorted(by: { lhs, rhs in
-            if lhs.modifiedAt == rhs.modifiedAt {
-                return lhs.url.path < rhs.url.path
-            }
-            return lhs.modifiedAt < rhs.modifiedAt
-        }) where totalBytes > policy.maxDirectoryBytes {
+        for entry in entries
+            .filter({ !$0.isProtected })
+            .sorted(by: { lhs, rhs in
+                if lhs.modifiedAt == rhs.modifiedAt {
+                    return lhs.url.path < rhs.url.path
+                }
+                return lhs.modifiedAt < rhs.modifiedAt
+            }) where totalBytes > policy.maxDirectoryBytes {
             if (try? fileManager.removeItem(at: entry.url)) != nil {
                 totalBytes -= entry.sizeBytes
             }
@@ -126,7 +130,7 @@ public enum BridgeDebugLogPruner {
     private static func debugLogFiles(
         in directory: URL,
         fileManager: FileManager,
-        excludingFileNames: Set<String>
+        protectedFileNames: Set<String>
     ) throws -> [DebugLogFileEntry] {
         let keys: Set<URLResourceKey> = [
             .isRegularFileKey,
@@ -143,10 +147,7 @@ public enum BridgeDebugLogPruner {
 
         var entries: [DebugLogFileEntry] = []
         for case let url as URL in enumerator {
-            guard !excludingFileNames.contains(url.lastPathComponent),
-                  isDebugLogFile(url) else {
-                continue
-            }
+            guard isDebugLogFile(url) else { continue }
 
             guard let values = try? url.resourceValues(forKeys: keys) else { continue }
             guard values.isRegularFile == true else { continue }
@@ -155,7 +156,8 @@ public enum BridgeDebugLogPruner {
                 DebugLogFileEntry(
                     url: url,
                     sizeBytes: Int64(values.fileSize ?? 0),
-                    modifiedAt: values.contentModificationDate ?? .distantPast
+                    modifiedAt: values.contentModificationDate ?? .distantPast,
+                    isProtected: protectedFileNames.contains(url.lastPathComponent)
                 )
             )
         }
@@ -176,4 +178,7 @@ private struct DebugLogFileEntry {
     let url: URL
     let sizeBytes: Int64
     let modifiedAt: Date
+    /// Active file(s) excluded from deletion (e.g. today's log). Still counted toward
+    /// the size cap so a bloated active file forces the other files to be pruned.
+    let isProtected: Bool
 }

@@ -55,6 +55,33 @@ func debugLogPrunerRemovesOldestFilesUntilUnderSizeLimit() async throws {
 }
 
 @Test
+func debugLogPrunerCountsExcludedActiveFileTowardSizeCapButNeverDeletesIt() async throws {
+    try await withTemporaryDirectory { directory in
+        let logsDirectory = directory.appending(path: ".ping-island-debug", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+        let activeLog = logsDirectory.appending(path: "20260611.jsonl")  // today's file, excluded from deletion
+        let oldLog = logsDirectory.appending(path: "20260610.jsonl")
+        let now = Date(timeIntervalSince1970: 1_781_136_000)
+
+        // The active file alone exceeds the 16MB cap; the older file is within retention.
+        try writeDebugLog(activeLog, size: 20 * 1024 * 1024, modifiedAt: now)
+        try writeDebugLog(oldLog, size: 8 * 1024 * 1024, modifiedAt: now.addingTimeInterval(-86_400))
+
+        try BridgeDebugLogPruner.prune(
+            directory: logsDirectory,
+            policy: BridgeDebugLogPolicy(retentionDays: 7, maxDirectoryMegabytes: 16),
+            now: now,
+            excludingFileNames: ["20260611.jsonl"]
+        )
+
+        // The active file counts toward the cap (20MB > 16MB), so the old file is evicted
+        // to reclaim space — but the protected active file itself is never deleted.
+        #expect(!FileManager.default.fileExists(atPath: oldLog.path))
+        #expect(FileManager.default.fileExists(atPath: activeLog.path))
+    }
+}
+
+@Test
 func debugLogPrunerDeletesLogsWhenPolicyDisabled() async throws {
     try await withTemporaryDirectory { directory in
         let logsDirectory = directory.appending(path: ".ping-island-debug", directoryHint: .isDirectory)

@@ -1099,7 +1099,19 @@ class HookSocketServer {
             return
         }
 
-        let expectsResponse = envelope.expectsResponse || envelope.hookEvent.expectsResponse
+        // For AskUserQuestion the bridge decides authoritatively whether Island should
+        // claim the answer (envelope.expectsResponse): notify-only for native Claude Code
+        // so its own CLI picker renders, claimed for wrapper clients without one. Trust
+        // that here instead of OR-ing the heuristic fallback, which would always
+        // re-assert a response and suppress the native picker.
+        let normalizedHookTool = envelope.hookEvent.tool?
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+        let isAskUserQuestion = envelope.hookEvent.event == "PreToolUse"
+            && normalizedHookTool == "askuserquestion"
+        let expectsResponse = isAskUserQuestion
+            ? envelope.expectsResponse
+            : (envelope.expectsResponse || envelope.hookEvent.expectsResponse)
         var event = envelope.hookEvent
         logger.debug("Received bridge envelope provider=\(envelope.provider.rawValue, privacy: .public) event=\(envelope.eventType, privacy: .public) session=\(event.sessionId.prefix(8), privacy: .public)")
 

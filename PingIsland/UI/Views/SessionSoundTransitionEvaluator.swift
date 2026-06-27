@@ -39,7 +39,13 @@ struct SessionSoundTransitionEvaluator {
     }
 
     private static func isAttention(_ session: SessionState) -> Bool {
-        session.needsApprovalResponse || (session.phase == .waitingForInput && session.intervention != nil)
+        // Auto-approve sessions resolve their own prompts; don't ring for them.
+        guard !session.autoApprovePermissions else { return false }
+        // Use the explicit question/approval signals rather than gating on
+        // `.waitingForInput`: Codex can surface a `request_user_input` question
+        // while the app-server snapshot still reports `.processing`, so a
+        // phase-gated check would miss the attention cue.
+        return session.needsApprovalResponse || session.needsQuestionResponse
     }
 
     private static func errorToolKeys(_ session: SessionState) -> [String] {
@@ -66,9 +72,14 @@ struct SessionSoundTransitionEvaluator {
             previousAttentionSoundIds = newAttentionIds
             // Preserve the original priming definition of "completion", which differs
             // from the steady-state `isCompletedReadySession` check used below.
+            // Also fold in the steady-state check so already-completed Codex idle
+            // sessions present at launch don't fire a spurious startup sound.
             previousCompletionSoundIds = Set(
                 instances
-                    .filter { $0.phase == .waitingForInput && $0.intervention == nil }
+                    .filter {
+                        ($0.phase == .waitingForInput && $0.intervention == nil)
+                            || SessionCompletionStateEvaluator.isCompletedReadySession($0)
+                    }
                     .map(\.stableId)
             )
             previousTaskErrorIds = newTaskErrorIds

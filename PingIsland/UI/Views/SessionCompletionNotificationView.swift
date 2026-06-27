@@ -88,9 +88,18 @@ enum SessionCompletionPreviewBuilder {
 
 enum SessionCompletionStateEvaluator {
     static func isCompletedReadySession(_ session: SessionState) -> Bool {
-        guard session.phase == .waitingForInput else { return false }
         guard session.intervention == nil else { return false }
+        // Completed Codex turns often settle as `.idle` rather than transitioning
+        // through `.waitingForInput`, so treat a Codex idle assistant-tail snapshot
+        // as completed-ready too (restores the Codex completion checkmark + sound).
+        guard session.phase == .waitingForInput || isCompletedCodexIdleSession(session) else {
+            return false
+        }
         return hasCompletedAssistantReply(for: session)
+    }
+
+    private static func isCompletedCodexIdleSession(_ session: SessionState) -> Bool {
+        session.provider == .codex && session.phase == .idle
     }
 
     /// Treat tool-only or commentary-only updates as in-progress. A completion notification

@@ -308,6 +308,10 @@ extension HookEvent {
         if isQoderWorkQuestionEvent {
             metadata["responseMode"] = "external_only"
             message = "\(actorName) 已在客户端内发起提问，请切回 \(actorName) 完成回答。Island 暂不支持直接提交这类回答。"
+        } else if clientInfo.brand == .claude {
+            // Claude Code 的提问在 CLI 里原生展示并作答；Island 只做提醒，不在岛内提供选项选择。
+            metadata["responseMode"] = "external_only"
+            message = "\(actorName) 正在 CLI 中发起提问，请切回终端作答，回答后会话会继续。"
         } else {
             message = "\(actorName) 需要你补充回答，提交后会继续执行当前会话。"
         }

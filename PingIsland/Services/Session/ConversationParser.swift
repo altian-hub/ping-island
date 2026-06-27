@@ -437,6 +437,11 @@ actor ConversationParser {
         let newMessages: [ChatMessage]
         let allMessages: [ChatMessage]
         let completedToolIds: Set<String>
+        /// Tool IDs that *first* received their result during this parse call. A
+        /// tail append can carry only a `tool_result` (e.g. the user answered an
+        /// AskUserQuestion in the CLI) with no new messages; this delta lets the
+        /// caller still dispatch so the answered-question intervention clears.
+        let newlyCompletedToolIds: Set<String>
         let toolResults: [String: ToolResult]
         let structuredResults: [String: ToolResultData]
         let clearDetected: Bool
@@ -452,6 +457,7 @@ actor ConversationParser {
                 newMessages: [],
                 allMessages: [],
                 completedToolIds: [],
+                newlyCompletedToolIds: [],
                 toolResults: [:],
                 structuredResults: [:],
                 clearDetected: false
@@ -459,6 +465,7 @@ actor ConversationParser {
         }
 
         var state = incrementalState[sessionId] ?? IncrementalParseState()
+        let previouslyCompletedToolIds = state.completedToolIds
         let newMessages = parseNewLines(filePath: sessionFile, state: &state, transcriptFormat: transcriptFormat)
         let clearDetected = state.clearPending
         if clearDetected {
@@ -470,10 +477,30 @@ actor ConversationParser {
             newMessages: newMessages,
             allMessages: state.messages,
             completedToolIds: state.completedToolIds,
+            newlyCompletedToolIds: state.completedToolIds.subtracting(previouslyCompletedToolIds),
             toolResults: state.toolResults,
             structuredResults: state.structuredResults,
             clearDetected: clearDetected
         )
+    }
+
+    /// A genuine `/clear` is a *user message whose `content` is the command STRING*
+    /// ("<command-name>/clear</command-name>"). The exact same marker can appear
+    /// incidentally inside a `tool_result`'s content — e.g. a tool that dumps source
+    /// or logs printing the marker — and those arrive as array content. Treating
+    /// those as a clear wipes the parsed transcript and `completedToolIds`, which in
+    /// turn drops an answered AskUserQuestion's tool, so the synthesized question
+    /// never clears. Match on the user-message string form only.
+    private static func isGenuineClearCommandLine(_ line: String) -> Bool {
+        // Cheap reject first so we only JSON-parse the rare lines that mention it.
+        guard line.contains("<command-name>/clear</command-name>") else { return false }
+        guard let lineData = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+              let message = json["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            return false
+        }
+        return content.contains("<command-name>/clear</command-name>")
     }
 
     /// Parse only new lines since last read (incremental)
@@ -534,7 +561,7 @@ actor ConversationParser {
         }
 
         for line in lines where !line.isEmpty {
-            if line.contains("<command-name>/clear</command-name>") {
+            if Self.isGenuineClearCommandLine(line) {
                 state.messages = []
                 state.seenToolIds = []
                 state.toolIdToName = [:]
@@ -620,6 +647,26 @@ actor ConversationParser {
     /// Reset incremental state for a session (call when reloading)
     func resetState(for sessionId: String) {
         incrementalState.removeValue(forKey: sessionId)
+    }
+
+    /// Fully evict every cached parse artifact for a session that has been
+    /// removed or archived. Without this, the parsed transcript (`messages`,
+    /// `toolResults`, `structuredResults`, the running info accumulator) stays
+    /// pinned in memory for the whole life of the app — a slow leak that
+    /// compounds badly under Claude's per-conversation title-gen helper
+    /// sessions, which spawn in bursts. `incrementalState` is keyed by session
+    /// id, while `infoState`/`cache` are keyed by the resolved transcript path,
+    /// so we recompute that path with the same helper `parse(...)` uses to clear
+    /// them under a matching key.
+    func evictState(sessionId: String, cwd: String, explicitFilePath: String? = nil) {
+        incrementalState.removeValue(forKey: sessionId)
+        let sessionFile = Self.sessionFilePath(
+            sessionId: sessionId,
+            cwd: cwd,
+            explicitFilePath: explicitFilePath
+        )
+        infoState.removeValue(forKey: sessionFile)
+        cache.removeValue(forKey: sessionFile)
     }
 
     /// Check if a /clear command was detected during the last parse

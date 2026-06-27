@@ -59,6 +59,11 @@ actor SessionStore {
     private var pendingOpenClawConversationPolls: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     private var codexSessionAliases: [String: String] = [:]
 
+    /// Claude spawns a disposable per-conversation title-gen helper session; we drop
+    /// those outright (see `dropClaudeTitleGenHookEventIfNeeded`) and remember their
+    /// ids here so the helper's follow-up hook events don't resurrect a hidden row.
+    private var ignoredClaudeTitleGenSessionIDs: Set<String> = []
+
     /// Sync debounce interval (100ms)
     private let syncDebounceNs: UInt64 = 100_000_000
     private let codexHookPlaceholderPruneDelayNs: UInt64 = 10_000_000_000
@@ -191,6 +196,16 @@ actor SessionStore {
         let sessionId = event.provider == .codex
             ? resolveOrAdoptCodexHookSession(event)
             : event.sessionId
+
+        // Claude spawns a throwaway helper session per conversation just to generate
+        // a title. Drop it outright — and tear down anything its SessionStart already
+        // created — instead of keeping a hidden ghost row, which otherwise piles up in
+        // `sessions` and the parser caches (one per conversation, many per swarm burst)
+        // and never gets swept.
+        if await dropClaudeTitleGenHookEventIfNeeded(event, sessionId: sessionId) {
+            return
+        }
+
         if shouldIgnoreCodexHookEvent(event, existingSession: sessions[sessionId]) {
             Self.logger.notice(
                 "Ignoring weak Codex hook event session=\(sessionId, privacy: .public) event=\(event.event, privacy: .public) status=\(event.status, privacy: .public)"
@@ -833,6 +848,21 @@ actor SessionStore {
             session.completedErrorToolIDs.insert(toolUseId)
         }
 
+        // A completed AskUserQuestion means the question was answered (in the CLI,
+        // for Claude). Clear the question intervention it backs so the island stops
+        // prompting "switch back to the terminal" for a prompt that no longer exists.
+        // Buddy clients deliberately retain an answered-question follow-up action, so
+        // they keep their own clearing/retention machinery instead.
+        if let intervention = session.intervention,
+           intervention.kind == .question,
+           (intervention.metadata["originalToolUseId"] ?? intervention.id) == toolUseId,
+           !session.clientInfo.prefersAnsweredQuestionFollowupAction {
+            session.intervention = nil
+            if session.phase == .waitingForInput {
+                session.phase = .processing
+            }
+        }
+
         sessions[sessionId] = session
     }
 
@@ -963,6 +993,19 @@ actor SessionStore {
         )
         session.conversationInfo = conversationInfo
 
+        // Catch the title-gen helper whose prompt only surfaces once the transcript is
+        // parsed (it never arrived in a hook message): drop the row and free its caches
+        // rather than leave a hidden ghost lingering in memory.
+        if session.provider == .claude, conversationInfo.isTitleGenerationPrompt {
+            ignoredClaudeTitleGenSessionIDs.insert(payload.sessionId)
+            await purgeClaudeTitleGenSession(
+                sessionId: payload.sessionId,
+                fallbackCwd: session.cwd,
+                fallbackFilePath: session.clientInfo.sessionFilePath
+            )
+            return
+        }
+
         // Handle /clear reconciliation - remove items that no longer exist in parser state
         if session.needsClearReconciliation {
             // Build set of valid IDs from the payload messages
@@ -1091,6 +1134,7 @@ actor SessionStore {
 
         await applyQoderFallbackIntervention(to: &session)
         applyClaudeTranscriptQuestionFallback(to: &session)
+        clearAnsweredQuestionIntervention(in: &session, completedToolIds: payload.completedToolIds)
         await refreshQoderFallbackSubagentPresentation(for: payload.sessionId, session: &session)
 
         if payload.isIncremental,
@@ -1415,6 +1459,19 @@ actor SessionStore {
         // by removing items that no longer exist in the parser's state
         session.needsClearReconciliation = true
         session.lastActivity = Date()
+
+        // A /clear resets the conversation, so any pending question is moot. Drop
+        // it (the backing tool may have been wiped from the parser's view, leaving
+        // nothing else able to clear the intervention). Buddy clients keep their
+        // own answered-question follow-up retention.
+        if session.intervention?.kind == .question,
+           !session.clientInfo.prefersAnsweredQuestionFollowupAction {
+            session.intervention = nil
+            if session.phase == .waitingForInput {
+                session.phase = .processing
+            }
+        }
+
         sessions[sessionId] = session
 
         Self.logger.info("/clear processed for session \(sessionId.prefix(8), privacy: .public) - marked for reconciliation")
@@ -1443,15 +1500,19 @@ actor SessionStore {
     /// or zero bytes (no real rollout was ever written). This catches Claude
     /// swarm/prewarm phantoms plus any other stale entries left behind on disk.
     private func cleanDeadSessions() async {
-        let deadInMemory = sessions.values
-            .filter(Self.sessionIsDead(_:))
-            .map(\.sessionId)
-        for sessionId in deadInMemory {
+        let deadSessions = sessions.values.filter(Self.sessionIsDead(_:))
+        for session in deadSessions {
+            let sessionId = session.sessionId
             sessions.removeValue(forKey: sessionId)
             clearCodexSessionAliases(for: sessionId)
             cancelPendingSync(sessionId: sessionId)
             cancelPendingCodexPlaceholderPrune(sessionId: sessionId)
             cancelPendingQoderConversationPoll(sessionId: sessionId)
+            await ConversationParser.shared.evictState(
+                sessionId: sessionId,
+                cwd: session.cwd,
+                explicitFilePath: session.clientInfo.sessionFilePath
+            )
         }
 
         ensurePersistedAssociationsLoaded()
@@ -1465,7 +1526,7 @@ actor SessionStore {
             scheduleAssociationSave()
         }
 
-        Self.logger.notice("Cleaned dead sessions: memory=\(deadInMemory.count, privacy: .public) cache=\(prunedFromCache ? "yes" : "no", privacy: .public)")
+        Self.logger.notice("Cleaned dead sessions: memory=\(deadSessions.count, privacy: .public) cache=\(prunedFromCache ? "yes" : "no", privacy: .public)")
         publishState()
     }
 
@@ -1491,9 +1552,10 @@ actor SessionStore {
 
     private func archiveSession(sessionId: String) async {
         let resolvedSessionId = resolveCodexSessionAlias(sessionId)
-        let linkedChildSessionIDs = sessions.values
+        let archivedSession = sessions[resolvedSessionId]
+        let linkedChildren = sessions.values
             .filter { $0.linkedParentSessionId == resolvedSessionId }
-            .map(\.sessionId)
+        let linkedChildSessionIDs = linkedChildren.map(\.sessionId)
         sessions.removeValue(forKey: resolvedSessionId)
         for childSessionId in linkedChildSessionIDs {
             sessions.removeValue(forKey: childSessionId)
@@ -1507,6 +1569,22 @@ actor SessionStore {
             cancelPendingSync(sessionId: childSessionId)
             cancelPendingCodexPlaceholderPrune(sessionId: childSessionId)
             cancelPendingQoderConversationPoll(sessionId: childSessionId)
+        }
+        // Free the parsed transcript these sessions left in the ConversationParser
+        // caches; otherwise an archived session keeps pinning its memory for good.
+        if let archivedSession {
+            await ConversationParser.shared.evictState(
+                sessionId: resolvedSessionId,
+                cwd: archivedSession.cwd,
+                explicitFilePath: archivedSession.clientInfo.sessionFilePath
+            )
+        }
+        for child in linkedChildren {
+            await ConversationParser.shared.evictState(
+                sessionId: child.sessionId,
+                cwd: child.cwd,
+                explicitFilePath: child.clientInfo.sessionFilePath
+            )
         }
     }
 
@@ -1611,6 +1689,7 @@ actor SessionStore {
 
         await applyQoderFallbackIntervention(to: &session)
         applyClaudeTranscriptQuestionFallback(to: &session)
+        clearAnsweredQuestionIntervention(in: &session, completedToolIds: completedTools)
         await refreshQoderFallbackSubagentPresentation(for: sessionId, session: &session)
 
         sessions[sessionId] = session
@@ -1638,7 +1717,13 @@ actor SessionStore {
                 await self?.process(.clearDetected(sessionId: sessionId))
             }
 
-            guard !result.newMessages.isEmpty || result.clearDetected else {
+            // A tail append can carry only a `tool_result` (e.g. the user just
+            // answered an AskUserQuestion in the CLI) with no new messages. Still
+            // dispatch so reconciliation flips the tool to completed and clears
+            // the synthesized question intervention.
+            guard !result.newMessages.isEmpty
+                    || result.clearDetected
+                    || !result.newlyCompletedToolIds.isEmpty else {
                 return
             }
 
@@ -2346,6 +2431,26 @@ actor SessionStore {
         }
     }
 
+    /// Authoritative safety net: a `.question` intervention whose backing
+    /// AskUserQuestion tool already has a result in the transcript was answered
+    /// (in the CLI, for Claude) and must not linger. Unlike the live
+    /// tool-completion clear, this works even when the answer happened before the
+    /// app started observing the session (cold load / app relaunch mid-session),
+    /// and regardless of how the question was created (hook or transcript) — it
+    /// keys off the parser's authoritative completed-tool set, not reconstructed
+    /// chat-item status. Buddy clients keep their own retention machinery.
+    private func clearAnsweredQuestionIntervention(in session: inout SessionState, completedToolIds: Set<String>) {
+        guard let intervention = session.intervention,
+              intervention.kind == .question,
+              !session.clientInfo.prefersAnsweredQuestionFollowupAction else { return }
+        let backingToolId = intervention.metadata["originalToolUseId"] ?? intervention.id
+        guard completedToolIds.contains(backingToolId) else { return }
+        session.intervention = nil
+        if session.phase == .waitingForInput {
+            session.phase = .processing
+        }
+    }
+
     private func applyClaudeTranscriptQuestionFallback(to session: inout SessionState) {
         guard session.provider == .claude,
               session.clientInfo.brand == .claude,
@@ -2468,7 +2573,8 @@ actor SessionStore {
             id: toolUseId,
             kind: .question,
             title: title,
-            message: "\(actorName) 需要你补充回答，提交后会继续执行当前会话。",
+            // Claude Code 的提问在 CLI 里原生展示并作答；Island 只做提醒，不在岛内提供选项选择。
+            message: "\(actorName) 正在 CLI 中发起提问，请切回终端作答，回答后会话会继续。",
             options: [],
             questions: parsedQuestions,
             supportsSessionScope: false,
@@ -2476,7 +2582,8 @@ actor SessionStore {
                 "toolName": "AskUserQuestion",
                 "toolInputJSON": payloadJSON,
                 "originalToolUseId": toolUseId,
-                "source": "claudeTranscriptQuestion"
+                "source": "claudeTranscriptQuestion",
+                "responseMode": "external_only"
             ]
         )
     }
@@ -3040,6 +3147,61 @@ actor SessionStore {
         }
 
         return CodexAuxiliaryHookFilter.isCodexTitleGenerationPrompt(message)
+    }
+
+    /// Claude Code spawns a disposable helper session per conversation whose only user
+    /// turn is a title-generation prompt ("In N words … write a session title that
+    /// captures: …"). We drop those entirely — tearing down whatever the helper's
+    /// SessionStart already created and remembering its id so the follow-up hook events
+    /// (and the transcript parse) don't resurrect a hidden ghost row. Mirrors
+    /// `CodexAuxiliaryHookFilter`, which does the same for the Codex equivalent.
+    private func dropClaudeTitleGenHookEventIfNeeded(_ event: HookEvent, sessionId: String) async -> Bool {
+        guard event.provider == .claude else { return false }
+
+        if ignoredClaudeTitleGenSessionIDs.contains(sessionId) {
+            // Forget the id once the helper ends so the set can't grow without bound.
+            if event.status == "ended" || event.event == "SessionEnd" || event.event == "Stop" {
+                ignoredClaudeTitleGenSessionIDs.remove(sessionId)
+            }
+            return true
+        }
+
+        guard ConversationParser.isClaudeTitleGenerationPrompt(Self.normalizedHookMessage(event.message)) else {
+            return false
+        }
+
+        Self.logger.notice(
+            "Dropping Claude title-gen helper session=\(sessionId, privacy: .public) event=\(event.event, privacy: .public)"
+        )
+        ignoredClaudeTitleGenSessionIDs.insert(sessionId)
+        await purgeClaudeTitleGenSession(
+            sessionId: sessionId,
+            fallbackCwd: event.cwd,
+            fallbackFilePath: event.clientInfo.sessionFilePath
+        )
+        return true
+    }
+
+    /// Remove a Claude title-gen helper session and free every trace of it: the row,
+    /// its pending work, and its (potentially large) parser caches.
+    private func purgeClaudeTitleGenSession(
+        sessionId: String,
+        fallbackCwd: String,
+        fallbackFilePath: String?
+    ) async {
+        let existing = sessions[sessionId]
+        let cwd = existing?.cwd ?? fallbackCwd
+        let filePath = existing?.clientInfo.sessionFilePath ?? fallbackFilePath
+        sessions.removeValue(forKey: sessionId)
+        cancelPendingSync(sessionId: sessionId)
+        cancelPendingCodexPlaceholderPrune(sessionId: sessionId)
+        cancelPendingQoderConversationPoll(sessionId: sessionId)
+        await ConversationParser.shared.evictState(
+            sessionId: sessionId,
+            cwd: cwd,
+            explicitFilePath: filePath
+        )
+        publishState()
     }
 
     private func shouldIgnoreClaudeAskUserQuestionPermissionRequest(_ event: HookEvent) -> Bool {

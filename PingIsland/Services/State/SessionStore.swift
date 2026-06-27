@@ -2176,6 +2176,22 @@ actor SessionStore {
         sessions[resolvedSessionId] = session
         publishState()
         updateCodexPlaceholderPrune(for: session)
+
+        // Start a file watcher for Codex sessions discovered via the App Server
+        // (hook-based sessions already get watchers via processHookEvent). Without
+        // this, sessions from non-official API providers never get watched.
+        if session.phase == .processing || session.phase == .waitingForInput || session.phase.isWaitingForApproval {
+            let watcherSessionId = resolvedSessionId
+            let watcherCwd = session.cwd
+            let watcherFilePath = session.clientInfo.sessionFilePath
+            Task { @MainActor in
+                InterruptWatcherManager.shared.startWatching(
+                    sessionId: watcherSessionId,
+                    cwd: watcherCwd,
+                    explicitFilePath: watcherFilePath
+                )
+            }
+        }
     }
 
     func updateCodexThreadName(sessionId: String, name: String?) {
@@ -2303,6 +2319,22 @@ actor SessionStore {
         sessions[resolvedSessionId] = session
         publishState()
         updateCodexPlaceholderPrune(for: session)
+
+        // Start a file watcher for App-Server-discovered Codex sessions (hook-ingress
+        // snapshots already get watchers via processHookEvent).
+        if ingress != .hookBridge,
+           session.phase == .processing || session.phase == .waitingForInput || session.phase.isWaitingForApproval {
+            let watcherSessionId = resolvedSessionId
+            let watcherCwd = session.cwd
+            let watcherFilePath = session.clientInfo.sessionFilePath
+            Task { @MainActor in
+                InterruptWatcherManager.shared.startWatching(
+                    sessionId: watcherSessionId,
+                    cwd: watcherCwd,
+                    explicitFilePath: watcherFilePath
+                )
+            }
+        }
     }
 
     private func shouldPreserveExternalCodexIntervention(

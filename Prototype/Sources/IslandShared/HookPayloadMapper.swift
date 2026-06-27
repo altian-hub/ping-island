@@ -39,6 +39,7 @@ public enum HookPayloadMapper {
             intervention: intervention
         )
         let expectsResponse = detectExpectsResponse(
+            provider: source,
             eventType: eventType,
             payload: payload,
             clientKind: clientKind,
@@ -300,6 +301,7 @@ public enum HookPayloadMapper {
     }
 
     private static func detectExpectsResponse(
+        provider: AgentProvider,
         eventType: String,
         payload: [String: Any],
         clientKind: String?,
@@ -314,11 +316,24 @@ public enum HookPayloadMapper {
             case .approval:
                 return true
             case .question:
-                return shouldSurfaceQuestionIntervention(
+                guard shouldSurfaceQuestionIntervention(
                     eventType: eventType,
                     payload: payload,
                     clientKind: clientKind
-                )
+                ) else {
+                    return false
+                }
+                // Native Claude Code renders its own AskUserQuestion picker in the
+                // terminal. Claiming the answer here (expectsResponse == true) makes the
+                // hook return the answer and suppresses that native picker. Stay
+                // notify-only for native Claude so the CLI prompt shows for the user to
+                // pick; the question is still surfaced in Island for visibility. Wrapper
+                // clients without a native picker (OpenCode answer-routing, Qoder,
+                // CodeBuddy, openclaw) keep routing the answer back through Island.
+                if isNativeClaudeQuestion(provider: provider, clientKind: clientKind, payload: payload) {
+                    return false
+                }
+                return true
             }
         }
 
@@ -334,6 +349,20 @@ public enum HookPayloadMapper {
         }
 
         return false
+    }
+
+    /// A question originating from the native Claude Code CLI, which renders its own
+    /// AskUserQuestion picker. Identified by the Claude source with no wrapper sub-client
+    /// (Qoder/CodeBuddy/openclaw set a `clientKind`) and no OpenCode answer-routing marker
+    /// (`_opencode_request_id`), since OpenCode questions also arrive with a nil clientKind.
+    private static func isNativeClaudeQuestion(
+        provider: AgentProvider,
+        clientKind: String?,
+        payload: [String: Any]
+    ) -> Bool {
+        provider == .claude
+            && clientKind == nil
+            && payload["_opencode_request_id"] == nil
     }
 
     private static func mapStatusString(_ string: String) -> SessionStatus {

@@ -127,6 +127,71 @@ func opencodeQuestionRequestCreatesQuestionIntervention() throws {
 }
 
 @Test
+func nativeClaudeQuestionStaysNotifyOnly() throws {
+    let payload = """
+    {
+      "hook_event_name": "PreToolUse",
+      "session_id": "claude-native-question",
+      "tool_name": "AskUserQuestion",
+      "tool_input": {
+        "questions": [
+          {
+            "id": "scope",
+            "header": "Scope",
+            "question": "Which should I do first?",
+            "options": [{"label": "Hooks"}]
+          }
+        ]
+      }
+    }
+    """.data(using: .utf8)!
+
+    let envelope = HookPayloadMapper.makeEnvelope(
+        source: .claude,
+        arguments: ["island-bridge", "--source", "claude"],
+        environment: ["PWD": "/tmp/demo"],
+        stdinData: payload
+    )
+
+    // Native Claude Code renders its own picker, so the bridge must NOT claim the
+    // answer — otherwise the native CLI prompt is suppressed and nothing shows.
+    #expect(envelope.expectsResponse == false)
+    // The question is still surfaced in Island for visibility.
+    #expect(envelope.intervention?.kind == .question)
+    #expect(envelope.metadata["tool_name"] == "AskUserQuestion")
+}
+
+@Test
+func openCodeRoutedQuestionStillExpectsResponse() throws {
+    // OpenCode's plugin path arrives with a nil clientKind but an _opencode_request_id
+    // marker, and relies on the bridge returning the answer — so it must keep
+    // expectsResponse even though native Claude (also nil clientKind) does not.
+    let payload = """
+    {
+      "hook_event_name": "PreToolUse",
+      "session_id": "opencode-routed",
+      "tool_name": "AskUserQuestion",
+      "tool_input": {
+        "questions": [
+          {"id": "scope", "question": "Which first?", "options": [{"label": "Hooks"}]}
+        ]
+      },
+      "_opencode_request_id": "req-123"
+    }
+    """.data(using: .utf8)!
+
+    let envelope = HookPayloadMapper.makeEnvelope(
+        source: .claude,
+        arguments: ["island-bridge", "--source", "claude"],
+        environment: ["PWD": "/tmp/demo"],
+        stdinData: payload
+    )
+
+    #expect(envelope.expectsResponse)
+    #expect(envelope.intervention?.kind == .question)
+}
+
+@Test
 func opencodeBridgePayloadEnvironmentOverridesTerminalContext() throws {
     let payload = """
     {

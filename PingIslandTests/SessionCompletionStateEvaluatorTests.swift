@@ -3,6 +3,42 @@ import XCTest
 @testable import Ping_Island
 
 final class SessionCompletionStateEvaluatorTests: XCTestCase {
+    func testCodexIdleAssistantTailIsCompletedReadyWhenRecentlyActive() {
+        let now = Date()
+        let session = SessionState(
+            sessionId: "codex-fresh-idle",
+            cwd: "/tmp/project",
+            provider: .codex,
+            phase: .idle,
+            chatItems: [
+                ChatHistoryItem(id: "1", type: .user("跑一下"), timestamp: now.addingTimeInterval(-10)),
+                ChatHistoryItem(id: "2", type: .assistant("完成了。"), timestamp: now.addingTimeInterval(-5))
+            ],
+            lastActivity: now.addingTimeInterval(-5)
+        )
+
+        XCTAssertTrue(SessionCompletionStateEvaluator.isCompletedReadySession(session, now: now))
+    }
+
+    func testCodexIdleAssistantTailIsNotCompletedReadyWhenStale() {
+        let now = Date()
+        // A historical Codex thread re-imported via thread/list: same `.idle` +
+        // assistant-tail shape, but last active an hour ago. Must not look newly done.
+        let session = SessionState(
+            sessionId: "codex-stale-idle",
+            cwd: "/tmp/project",
+            provider: .codex,
+            phase: .idle,
+            chatItems: [
+                ChatHistoryItem(id: "1", type: .user("跑一下"), timestamp: now.addingTimeInterval(-3_600)),
+                ChatHistoryItem(id: "2", type: .assistant("很久以前就完成了。"), timestamp: now.addingTimeInterval(-3_595))
+            ],
+            lastActivity: now.addingTimeInterval(-3_600)
+        )
+
+        XCTAssertFalse(SessionCompletionStateEvaluator.isCompletedReadySession(session, now: now))
+    }
+
     func testCompletedAssistantReplyRejectsToolOnlyTail() {
         let session = SessionState(
             sessionId: "tool-tail",

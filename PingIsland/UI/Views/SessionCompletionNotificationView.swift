@@ -87,19 +87,29 @@ enum SessionCompletionPreviewBuilder {
 }
 
 enum SessionCompletionStateEvaluator {
-    static func isCompletedReadySession(_ session: SessionState) -> Bool {
+    /// How recently a Codex `.idle` session must have been active to count as a
+    /// just-finished turn. Codex app-server polls `thread/list` and re-imports
+    /// already-finished historical threads, whose `.idle` + assistant-tail shape is
+    /// indistinguishable from a fresh completion except by recency. Mirrors
+    /// upstream's 60s untracked-session notification window.
+    static let codexIdleCompletionFreshnessWindow: TimeInterval = 60
+
+    static func isCompletedReadySession(_ session: SessionState, now: Date = Date()) -> Bool {
         guard session.intervention == nil else { return false }
         // Completed Codex turns often settle as `.idle` rather than transitioning
         // through `.waitingForInput`, so treat a Codex idle assistant-tail snapshot
-        // as completed-ready too (restores the Codex completion checkmark + sound).
-        guard session.phase == .waitingForInput || isCompletedCodexIdleSession(session) else {
+        // as completed-ready too (restores the Codex completion checkmark + sound) —
+        // but only while recently active, so re-imported historical threads don't
+        // fire spurious completion popups + sounds.
+        guard session.phase == .waitingForInput || isCompletedCodexIdleSession(session, now: now) else {
             return false
         }
         return hasCompletedAssistantReply(for: session)
     }
 
-    private static func isCompletedCodexIdleSession(_ session: SessionState) -> Bool {
-        session.provider == .codex && session.phase == .idle
+    private static func isCompletedCodexIdleSession(_ session: SessionState, now: Date = Date()) -> Bool {
+        guard session.provider == .codex, session.phase == .idle else { return false }
+        return now.timeIntervalSince(session.lastActivity) <= codexIdleCompletionFreshnessWindow
     }
 
     /// Treat tool-only or commentary-only updates as in-progress. A completion notification

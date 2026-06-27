@@ -128,6 +128,42 @@ enum SessionCompletionStateEvaluator {
     }
 }
 
+/// Decides whether a session transition should surface a completion/ended popup.
+/// Kept separate from `SessionCompletionStateEvaluator` (pure state) so the recency
+/// policy is unit-testable with an injected `now`.
+enum SessionCompletionNotificationPolicy {
+    /// A previously-tracked session can re-enter a completed/ended phase long after it
+    /// actually finished — a stale app-server snapshot, or a re-imported historical
+    /// thread. Only surface a notification when the session was active within this
+    /// window, so stale transitions can't requeue alerts. Mirrors upstream's 60s window.
+    static let notificationRecencyWindow: TimeInterval = 60
+
+    static func shouldQueueCompletedNotification(
+        for session: SessionState,
+        previousPhase: SessionPhase?,
+        now: Date = Date()
+    ) -> Bool {
+        guard SessionCompletionStateEvaluator.isCompletedReadySession(session, now: now) else { return false }
+        guard previousPhase != .waitingForInput else { return false }
+        return isRecentlyActive(session, now: now)
+    }
+
+    static func shouldQueueEndedNotification(
+        for session: SessionState,
+        previousPhase: SessionPhase?,
+        now: Date = Date()
+    ) -> Bool {
+        guard session.phase == .ended else { return false }
+        guard previousPhase != .ended else { return false }
+        guard previousPhase != .waitingForInput else { return false }
+        return isRecentlyActive(session, now: now)
+    }
+
+    private static func isRecentlyActive(_ session: SessionState, now: Date) -> Bool {
+        now.timeIntervalSince(session.lastActivity) <= notificationRecencyWindow
+    }
+}
+
 struct SessionCompletionNotificationView: View {
     static let minimumContentHeight: CGFloat = 172
     static let maximumAssistantContentHeight: CGFloat = 300

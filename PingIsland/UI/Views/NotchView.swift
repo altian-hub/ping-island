@@ -952,11 +952,15 @@ struct NotchView: View {
             .compactMap { session -> SessionCompletionNotification? in
                 let previousPhase = previousCompletionNotificationPhases[session.stableId]
 
-                if shouldQueueCompletedNotification(for: session, previousPhase: previousPhase) {
+                if SessionCompletionNotificationPolicy.shouldQueueCompletedNotification(
+                    for: session, previousPhase: previousPhase
+                ) {
                     return SessionCompletionNotification(session: session, kind: .completed)
                 }
 
-                if shouldQueueEndedNotification(for: session, previousPhase: previousPhase) {
+                if SessionCompletionNotificationPolicy.shouldQueueEndedNotification(
+                    for: session, previousPhase: previousPhase
+                ) {
                     return SessionCompletionNotification(session: session, kind: .ended)
                 }
 
@@ -970,25 +974,6 @@ struct NotchView: View {
 
         previousCompletionNotificationPhases = currentPhases
         maybePresentNextCompletionNotification()
-    }
-
-    private func shouldQueueCompletedNotification(
-        for session: SessionState,
-        previousPhase: SessionPhase?
-    ) -> Bool {
-        guard SessionCompletionStateEvaluator.isCompletedReadySession(session) else { return false }
-        guard previousPhase != .waitingForInput else { return false }
-        return true
-    }
-
-    private func shouldQueueEndedNotification(
-        for session: SessionState,
-        previousPhase: SessionPhase?
-    ) -> Bool {
-        guard session.phase == .ended else { return false }
-        guard previousPhase != .ended else { return false }
-        guard previousPhase != .waitingForInput else { return false }
-        return true
     }
 
     private func synchronizeCompletionNotifications(with instances: [SessionState]) {

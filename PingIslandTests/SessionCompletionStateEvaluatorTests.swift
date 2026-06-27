@@ -39,6 +39,83 @@ final class SessionCompletionStateEvaluatorTests: XCTestCase {
         XCTAssertFalse(SessionCompletionStateEvaluator.isCompletedReadySession(session, now: now))
     }
 
+    func testCompletionNotificationPolicyRejectsTrackedStaleCompletedTransition() {
+        let now = Date()
+        let session = SessionState(
+            sessionId: "tracked-stale-completed",
+            cwd: "/tmp/project",
+            provider: .codex,
+            clientInfo: SessionClientInfo.codexApp(threadId: "tracked-stale-completed"),
+            phase: .idle,
+            chatItems: [
+                ChatHistoryItem(id: "assistant", type: .assistant("Done earlier"), timestamp: now.addingTimeInterval(-3_600))
+            ],
+            lastActivity: now.addingTimeInterval(-3_600),
+            createdAt: now.addingTimeInterval(-3_600)
+        )
+
+        XCTAssertFalse(
+            SessionCompletionNotificationPolicy.shouldQueueCompletedNotification(
+                for: session,
+                previousPhase: .processing,
+                now: now
+            )
+        )
+    }
+
+    func testCompletionNotificationPolicyRejectsTrackedStaleEndedTransition() {
+        let now = Date()
+        let session = SessionState(
+            sessionId: "tracked-stale-ended",
+            cwd: "/tmp/project",
+            phase: .ended,
+            lastActivity: now.addingTimeInterval(-3_600),
+            createdAt: now.addingTimeInterval(-3_600)
+        )
+
+        XCTAssertFalse(
+            SessionCompletionNotificationPolicy.shouldQueueEndedNotification(
+                for: session,
+                previousPhase: .processing,
+                now: now
+            )
+        )
+    }
+
+    func testCompletionNotificationPolicyAllowsFreshCompletedAndEndedTransitions() {
+        let now = Date()
+        let completed = SessionState(
+            sessionId: "fresh-completed",
+            cwd: "/tmp/project",
+            phase: .waitingForInput,
+            chatItems: [
+                ChatHistoryItem(id: "assistant", type: .assistant("Just finished"), timestamp: now.addingTimeInterval(-2))
+            ],
+            lastActivity: now.addingTimeInterval(-2)
+        )
+        XCTAssertTrue(
+            SessionCompletionNotificationPolicy.shouldQueueCompletedNotification(
+                for: completed,
+                previousPhase: .processing,
+                now: now
+            )
+        )
+
+        let ended = SessionState(
+            sessionId: "fresh-ended",
+            cwd: "/tmp/project",
+            phase: .ended,
+            lastActivity: now.addingTimeInterval(-2)
+        )
+        XCTAssertTrue(
+            SessionCompletionNotificationPolicy.shouldQueueEndedNotification(
+                for: ended,
+                previousPhase: .processing,
+                now: now
+            )
+        )
+    }
+
     func testCompletedAssistantReplyRejectsToolOnlyTail() {
         let session = SessionState(
             sessionId: "tool-tail",

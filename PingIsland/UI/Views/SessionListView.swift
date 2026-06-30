@@ -439,6 +439,15 @@ struct InstanceRow: View {
                     foreground: .white.opacity(0.9)
                 )
             }
+
+            if let permissionModeLabel = session.permissionModeBadgeLabel {
+                let modeColor = permissionModeBadgeColor(permissionModeLabel)
+                metaBadge(
+                    permissionModeLabel,
+                    tint: modeColor.opacity(0.22),
+                    foreground: modeColor
+                )
+            }
         }
     }
 
@@ -586,6 +595,21 @@ struct InstanceRow: View {
         Color.white.opacity(0.1)
     }
 
+    /// Accent for the Auto/Edit/Plan permission-mode pill, matching the Claude CLI
+    /// theme: auto = gold, accept-edits = green, plan = purple.
+    private func permissionModeBadgeColor(_ label: String) -> Color {
+        switch label {
+        case "Auto":
+            return TerminalColors.gold
+        case "Edit":
+            return TerminalColors.green
+        case "Plan":
+            return TerminalColors.purple
+        default:
+            return TerminalColors.prompt
+        }
+    }
+
     private var rowBackgroundColor: Color {
         if isExpanded {
             if session.needsQuestionResponse {
@@ -688,6 +712,16 @@ struct InstanceRow: View {
                     terminalSourceLabel,
                     tint: terminalBadgeTint,
                     foreground: .white.opacity(0.82),
+                    compact: true
+                )
+            }
+
+            if let permissionModeLabel = session.permissionModeBadgeLabel {
+                let modeColor = permissionModeBadgeColor(permissionModeLabel)
+                metaBadge(
+                    permissionModeLabel,
+                    tint: modeColor.opacity(0.22),
+                    foreground: modeColor,
                     compact: true
                 )
             }

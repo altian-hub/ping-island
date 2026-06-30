@@ -744,6 +744,23 @@ struct SessionState: Equatable, Identifiable, Sendable {
         deduplicatedSecondaryBadgeLabel(clientInfo.terminalSourceDisplayName)
     }
 
+    /// Optional permission-mode badge ("Auto" / "Edit" / "Plan") derived from the
+    /// Claude Code transcript's current `permissionMode`. The default mode shows no
+    /// pill. Only Claude-format transcripts carry this value, so other providers
+    /// naturally return nil.
+    nonisolated var permissionModeBadgeLabel: String? {
+        switch conversationInfo.permissionMode {
+        case "auto":
+            return "Auto"
+        case "acceptEdits":
+            return "Edit"
+        case "plan":
+            return "Plan"
+        default:
+            return nil
+        }
+    }
+
     /// Remote sessions come from the dedicated remote bridge or carry SSH/remote context.
     nonisolated var isRemoteSession: Bool {
         if ingress == .remoteBridge {

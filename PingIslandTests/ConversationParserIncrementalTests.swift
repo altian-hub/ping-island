@@ -134,7 +134,48 @@ final class ConversationParserIncrementalTests: XCTestCase {
         XCTAssertEqual(info.lastMessage, "Totally different question")
     }
 
+    // MARK: - Permission mode
+
+    func testColdParseCapturesLatestPermissionMode() async throws {
+        let lines = [
+            permissionMode("default"),
+            userText("Help me fix the clock", timestamp: "2026-06-12T10:00:01.000Z"),
+            permissionMode("acceptEdits"),
+            assistantText("On it", timestamp: "2026-06-12T10:00:02.000Z"),
+            permissionMode("auto"),
+        ]
+        let path = try writeFile(name: "mode-cold.jsonl", lines: lines, mtime: 1_000)
+        let info = await ConversationParser.shared.parse(sessionId: "m", cwd: "/tmp", explicitFilePath: path)
+
+        XCTAssertEqual(info.permissionMode, "auto", "the most recent permission-mode line must win")
+    }
+
+    func testNoPermissionModeLineLeavesModeNil() async throws {
+        let path = try writeFile(name: "mode-absent.jsonl", lines: fixtureLines(), mtime: 1_000)
+        let info = await ConversationParser.shared.parse(sessionId: "m2", cwd: "/tmp", explicitFilePath: path)
+
+        XCTAssertNil(info.permissionMode)
+    }
+
+    func testIncrementalTailPicksUpModeChange() async throws {
+        let head = [
+            permissionMode("default"),
+            userText("Plan this out", timestamp: "2026-06-12T10:00:01.000Z"),
+        ]
+        let path = try writeFile(name: "mode-inc.jsonl", lines: head, mtime: 1_000)
+        let first = await ConversationParser.shared.parse(sessionId: "m3", cwd: "/tmp", explicitFilePath: path)
+        XCTAssertEqual(first.permissionMode, "default")
+
+        try append(to: path, lines: [permissionMode("plan")], mtime: 2_000)
+        let second = await ConversationParser.shared.parse(sessionId: "m3", cwd: "/tmp", explicitFilePath: path)
+        XCTAssertEqual(second.permissionMode, "plan", "a mode toggle appended later must be folded in")
+    }
+
     // MARK: - JSONL builders
+
+    private func permissionMode(_ mode: String) -> String {
+        jsonLine(["type": "permission-mode", "permissionMode": mode, "sessionId": "s"])
+    }
 
     private func jsonLine(_ obj: [String: Any]) -> String {
         let data = try! JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])

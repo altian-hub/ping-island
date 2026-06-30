@@ -22,6 +22,11 @@ struct ConversationInfo: Equatable, Sendable {
     /// so the zero-byte phantom heuristic misses them; this flag lets the UI hide them.
     /// Defaulted so existing (Codex) initializers compile unchanged.
     var isTitleGenerationPrompt: Bool = false
+    /// Latest Claude Code permission mode from the transcript's `permission-mode`
+    /// entries: "default", "auto", "acceptEdits", or "plan". Drives the mode pill
+    /// shown next to the terminal-source badge. Defaulted so existing initializers
+    /// (Codex/openClaw) compile unchanged.
+    var permissionMode: String? = nil
 }
 
 actor ConversationParser {
@@ -70,6 +75,7 @@ actor ConversationParser {
         var firstUserMessage: String?
         var lastUserMessageDate: Date?
         var isTitleGenerationPrompt = false
+        var permissionMode: String?
 
         var info: ConversationInfo {
             ConversationInfo(
@@ -79,7 +85,8 @@ actor ConversationParser {
                 lastToolName: lastToolName,
                 firstUserMessage: firstUserMessage,
                 lastUserMessageDate: lastUserMessageDate,
-                isTitleGenerationPrompt: isTitleGenerationPrompt
+                isTitleGenerationPrompt: isTitleGenerationPrompt,
+                permissionMode: permissionMode
             )
         }
     }
@@ -256,6 +263,16 @@ actor ConversationParser {
 
         if type == "summary", let summaryText = json["summary"] as? String {
             acc.summary = summaryText
+            return
+        }
+
+        // Claude Code writes a `permission-mode` line each time the mode changes
+        // (shift+tab cycling). Folding in file order keeps the most recent value,
+        // which is the session's current mode.
+        if type == "permission-mode" {
+            if let mode = json["permissionMode"] as? String {
+                acc.permissionMode = mode
+            }
             return
         }
 

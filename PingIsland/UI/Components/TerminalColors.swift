@@ -18,6 +18,10 @@ struct TerminalColors {
     static let magenta = Color(red: 0.8, green: 0.4, blue: 0.8)
     static let codebuddy = Color(red: 0.68, green: 0.45, blue: 0.98)
     static let qoder = Color(red: 0.12, green: 0.88, blue: 0.56)
+    // Claude CLI permission-mode accents: auto = gold, accept-edits = green, plan = purple.
+    // Gold matches the CLI's "auto mode on" goldenrod.
+    static let gold = Color(red: 0.93, green: 0.71, blue: 0.13)
+    static let purple = Color(red: 0.72, green: 0.49, blue: 0.96)
     static let dim = Color.white.opacity(0.4)
     static let dimmer = Color.white.opacity(0.2)
     static let prompt = Color(red: 0.85, green: 0.47, blue: 0.34)  // #d97857

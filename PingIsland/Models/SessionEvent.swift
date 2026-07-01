@@ -217,6 +217,16 @@ extension HookEvent {
             && !(questionPayloads?.isEmpty ?? true)
     }
 
+    /// True when the event targets an interactive question tool (AskUserQuestion /
+    /// AskFollowupQuestion), regardless of hook phase. `isAskUserQuestionRequest` is scoped
+    /// to `PreToolUse`; this also matches the `PermissionRequest` phase so the auto-approve
+    /// path can exempt questions. A question has no meaningful "allow" — approving its
+    /// PermissionRequest returns a decision that skips the native picker
+    /// ("Allowed by PermissionRequest hook") and the user never gets to answer.
+    nonisolated var targetsQuestionTool: Bool {
+        Self.questionToolNames.contains(normalizedToolNameForIntervention ?? "")
+    }
+
     nonisolated var questionPayloads: [[String: Any]]? {
         guard let rawQuestions = toolInput?["questions"]?.value else {
             return nil

@@ -576,7 +576,12 @@ class SessionMonitor: ObservableObject {
     private nonisolated static func shouldAutoApproveClaudePermission(for event: HookEvent) async -> Bool {
         guard event.provider == .claude,
               event.event == "PermissionRequest",
-              event.status == "waiting_for_approval"
+              event.status == "waiting_for_approval",
+              // Never auto-approve a question. AskUserQuestion isn't a tool to permit; a blanket
+              // "allow" here returns a permission decision ("Allowed by PermissionRequest hook")
+              // that suppresses the native picker, so the user never gets to answer. Let it
+              // surface like default mode does even while auto-approve is on for real tools.
+              !event.targetsQuestionTool
         else {
             return false
         }

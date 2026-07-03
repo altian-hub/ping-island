@@ -135,7 +135,12 @@ final class RecentInterventionResponseStoreTests: XCTestCase {
         XCTAssertNil(store.response(for: event, now: Date(timeIntervalSince1970: 106)))
     }
 
-    func testClaudeAnswerCanBeReplayedForDuplicateAskUserQuestionPermissionRequest() {
+    func testPlainClaudeQuestionAnswersAreNeitherRecordedNorReplayed() {
+        // Plain-Claude question sockets are never held (notify-only so the native
+        // CLI picker renders — see HookEvent.shouldHoldHookSocket), so recording or
+        // replaying answers for them is dead weight; replaying onto a duplicate
+        // PermissionRequest would re-suppress the native picker. Only qoderwork's
+        // held-and-answered question flow uses the store.
         var store = RecentInterventionResponseStore(ttl: 30)
 
         let questionEvent = HookEvent(
@@ -219,7 +224,7 @@ final class RecentInterventionResponseStoreTests: XCTestCase {
             now: Date(timeIntervalSince1970: 101)
         )
 
-        XCTAssertEqual(replay?.decision, "answer")
-        XCTAssertEqual(replay?.updatedInput?["answers"]?.value as? [String: String], ["project": "会话层"])
+        XCTAssertNil(replay, "plain-Claude question answers must not be recorded or replayed — a replayed answer onto a PermissionRequest suppresses the native CLI picker")
+        XCTAssertNil(RecentInterventionResponseStore.cacheKey(for: questionEvent))
     }
 }

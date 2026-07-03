@@ -2409,10 +2409,7 @@ actor SessionStore {
 
         let questionToolStatuses = session.chatItems.compactMap { item -> ToolStatus? in
             guard case .toolCall(let tool) = item.type else { return nil }
-            let normalizedName = tool.name
-                .lowercased()
-                .replacingOccurrences(of: "_", with: "")
-            guard normalizedName == "askuserquestion" else { return nil }
+            guard HookEvent.isQuestionToolName(tool.name) else { return nil }
             return tool.status
         }
         let hasAnyQuestionTool = !questionToolStatuses.isEmpty
@@ -2495,11 +2492,7 @@ actor SessionStore {
 
         guard let pendingQuestionTool = session.chatItems.reversed().compactMap({ item -> (id: String, tool: ToolCallItem)? in
             guard case .toolCall(let tool) = item.type else { return nil }
-            let normalizedName = tool.name
-                .lowercased()
-                .replacingOccurrences(of: "_", with: "")
-                .replacingOccurrences(of: "-", with: "")
-            guard normalizedName == "askuserquestion" else { return nil }
+            guard HookEvent.isQuestionToolName(tool.name) else { return nil }
             guard tool.status == .running || tool.status == .waitingForApproval else { return nil }
             return (item.id, tool)
         }).first else {
@@ -3241,12 +3234,15 @@ actor SessionStore {
             return false
         }
 
+        // qoderwork's question PermissionRequests are claimed by the bridge and
+        // answered through Island — never drop those. Plain qoder is NOT exempt:
+        // its questions are notify-only end-to-end (the bridge holds no socket for
+        // them in any phase), so its question PermissionRequests are dropped like
+        // native Claude's — surfacing one would render an Allow/Deny card whose
+        // buttons have no held socket to answer.
         let profileID = event.clientInfo.profileID?.lowercased()
         let bundleIdentifier = event.clientInfo.bundleIdentifier?.lowercased()
-        if profileID == "qoder"
-            || profileID == "qoderwork"
-            || bundleIdentifier == "com.qoder.ide"
-            || bundleIdentifier == "com.qoder.work" {
+        if profileID == "qoderwork" || bundleIdentifier == "com.qoder.work" {
             return false
         }
 

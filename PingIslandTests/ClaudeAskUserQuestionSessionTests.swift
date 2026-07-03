@@ -170,6 +170,23 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
         await store.process(.sessionArchived(sessionId: sessionId))
     }
 
+    func testPlainQoderQuestionPermissionRequestDoesNotCreateApprovalState() async {
+        // Plain qoder (com.qoder.ide, non-qoderwork) questions are notify-only
+        // end-to-end: the bridge holds no socket for them in any phase, so a
+        // question PermissionRequest must be dropped like native Claude's —
+        // surfacing it would render Allow/Deny buttons that no-op.
+        let sessionId = "qoder-permission-\(UUID().uuidString)"
+        let store = SessionStore.shared
+
+        await store.process(.hookReceived(makePlainQoderPermissionRequest(sessionId: sessionId)))
+
+        let session = await store.session(for: sessionId)
+        XCTAssertNil(session?.activePermission)
+        XCTAssertFalse(session?.needsApprovalResponse ?? false)
+
+        await store.process(.sessionArchived(sessionId: sessionId))
+    }
+
     func testHistoryLoadedQuestionToolSynthesizesClaudeIntervention() async {
         let sessionId = "claude-history-\(UUID().uuidString)"
         let store = SessionStore.shared
@@ -530,6 +547,41 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
                 ])
             ],
             toolUseId: "toolu_\(sessionId)",
+            notificationType: nil,
+            message: nil
+        )
+    }
+
+    private func makePlainQoderPermissionRequest(sessionId: String) -> HookEvent {
+        HookEvent(
+            sessionId: sessionId,
+            cwd: "/tmp/project",
+            event: "PermissionRequest",
+            status: "waiting_for_approval",
+            provider: .claude,
+            clientInfo: SessionClientInfo(
+                kind: .qoder,
+                profileID: "qoder",
+                name: "Qoder",
+                bundleIdentifier: "com.qoder.ide"
+            ),
+            pid: nil,
+            tty: nil,
+            tool: "AskUserQuestion",
+            toolInput: [
+                "questions": AnyCodable([
+                    [
+                        "id": "topic",
+                        "header": "主题",
+                        "question": "先选一个主题",
+                        "options": [
+                            ["label": "A 方案"],
+                            ["label": "B 方案"]
+                        ]
+                    ]
+                ])
+            ],
+            toolUseId: nil,
             notificationType: nil,
             message: nil
         )

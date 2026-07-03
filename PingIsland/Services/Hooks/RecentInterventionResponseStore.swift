@@ -61,53 +61,25 @@ struct RecentInterventionResponseStore {
             return nil
         }
 
-        let normalizedTool = event.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        guard normalizedTool == "askuserquestion" else { return nil }
+        guard let normalizedTool = HookEvent.normalizedToolName(event.tool),
+              HookEvent.questionToolNames.contains(normalizedTool) else { return nil }
         guard let signature = questionSignature(from: event.toolInput), !signature.isEmpty else { return nil }
 
-        return ([event.sessionId, normalizedTool ?? "askuserquestion"] + signature).joined(separator: "||")
+        return ([event.sessionId, normalizedTool] + signature).joined(separator: "||")
     }
 
+    // Only qoderwork question flows are held-and-answered through Island in a way
+    // that re-fires duplicate hooks; native/plain-Claude question sockets are never
+    // held (notify-only so the CLI's own picker renders — see
+    // HookEvent.shouldHoldHookSocket), so the former plain-Claude record/replay
+    // branches were unreachable dead weight: entries were written but a duplicate
+    // question PermissionRequest is closed with no decision by design.
     private static func shouldStoreAnswerReplay(for event: HookEvent) -> Bool {
-        if event.clientInfo.profileID == "qoderwork" || event.clientInfo.bundleIdentifier == "com.qoder.work" {
-            return true
-        }
-
-        let normalizedTool = event.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        let profileID = event.clientInfo.profileID?.lowercased()
-        let bundleIdentifier = event.clientInfo.bundleIdentifier?.lowercased()
-        let isPlainClaudeCode = profileID != "qoder"
-            && profileID != "qoderwork"
-            && bundleIdentifier != "com.qoder.ide"
-            && bundleIdentifier != "com.qoder.work"
-        return event.provider == .claude && normalizedTool == "askuserquestion" && isPlainClaudeCode
+        event.clientInfo.profileID == "qoderwork" || event.clientInfo.bundleIdentifier == "com.qoder.work"
     }
 
     private static func shouldReplayAnswer(for event: HookEvent) -> Bool {
-        if event.clientInfo.profileID == "qoderwork" || event.clientInfo.bundleIdentifier == "com.qoder.work" {
-            return true
-        }
-
-        let normalizedTool = event.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        let profileID = event.clientInfo.profileID?.lowercased()
-        let bundleIdentifier = event.clientInfo.bundleIdentifier?.lowercased()
-        let isPlainClaudeCode = profileID != "qoder"
-            && profileID != "qoderwork"
-            && bundleIdentifier != "com.qoder.ide"
-            && bundleIdentifier != "com.qoder.work"
-        return event.provider == .claude
-            && event.event == "PermissionRequest"
-            && normalizedTool == "askuserquestion"
-            && isPlainClaudeCode
+        shouldStoreAnswerReplay(for: event)
     }
 
     static func questionSignature(from toolInput: [String: AnyCodable]?) -> [String]? {

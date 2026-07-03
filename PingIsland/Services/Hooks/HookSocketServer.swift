@@ -84,16 +84,15 @@ struct HookEvent: Sendable {
         }
     }
 
+    /// Heuristic "is this event awaiting a user decision" — consumed by
+    /// determinePhase (SessionEvent.swift) and the codex ignore guard
+    /// (SessionStore.swift) in addition to `shouldHoldHookSocket`'s fallback arm.
+    /// The question clause is `isAskUserQuestionRequest` (shared predicate: both
+    /// question tool names, parseable payloads) rather than an inline copy that
+    /// drifts out of sync with it.
     nonisolated var expectsResponse: Bool {
-        let normalizedTool = tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-        return (event == "PermissionRequest" && status == "waiting_for_approval")
-            || (
-                event == "PreToolUse"
-                    && normalizedTool == "askuserquestion"
-                    && toolInput?["questions"] != nil
-            )
+        (event == "PermissionRequest" && status == "waiting_for_approval")
+            || isAskUserQuestionRequest
     }
 
     /// Whether Island should keep the hook socket open awaiting a decision for this
@@ -457,9 +456,14 @@ private extension BridgeEnvelope {
 
     private static func normalizedToolName(_ rawToolName: String?) -> String? {
         guard let rawToolName else { return nil }
-        switch rawToolName.lowercased() {
-        case "ask_user_question", "askuserquestion":
+        // Canonicalize question tools to their display names via the shared
+        // normalization so hyphen/underscore spellings match downstream literal
+        // comparisons (e.g. SessionListView's interactive-tool check).
+        switch HookEvent.normalizedToolName(rawToolName) {
+        case "askuserquestion":
             return "AskUserQuestion"
+        case "askfollowupquestion":
+            return "AskFollowupQuestion"
         default:
             return rawToolName
         }
@@ -987,13 +991,9 @@ class HookSocketServer {
     private func eventsLikelyReferToSameIntervention(_ lhs: HookEvent, _ rhs: HookEvent) -> Bool {
         guard lhs.sessionId == rhs.sessionId else { return false }
 
-        let normalizedLhsTool = lhs.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-        let normalizedRhsTool = rhs.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-        guard normalizedLhsTool == normalizedRhsTool else { return false }
+        guard HookEvent.normalizedToolName(lhs.tool) == HookEvent.normalizedToolName(rhs.tool) else {
+            return false
+        }
 
         let exactKeyMatch = cacheKey(sessionId: lhs.sessionId, toolName: lhs.tool, toolInput: lhs.toolInput)
             == cacheKey(sessionId: rhs.sessionId, toolName: rhs.tool, toolInput: rhs.toolInput)

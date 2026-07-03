@@ -142,10 +142,28 @@ struct ToolCompletionResult: Sendable {
 // MARK: - Hook Event Extensions
 
 extension HookEvent {
-    private nonisolated static let questionToolNames: Set<String> = [
+    nonisolated static let questionToolNames: Set<String> = [
         "askuserquestion",
         "askfollowupquestion"
     ]
+
+    /// Canonical tool-name normalization (lowercased, "_" and "-" stripped) shared
+    /// by every question-tool membership check. Inline re-implementations of this
+    /// have drifted before (underscore-only copies missing hyphenated spellings) —
+    /// use this instead of hand-rolling `replacingOccurrences` chains.
+    nonisolated static func normalizedToolName(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        return raw
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+    }
+
+    /// Whether the raw tool name refers to an interactive question tool
+    /// (AskUserQuestion / AskFollowupQuestion), in any spelling.
+    nonisolated static func isQuestionToolName(_ raw: String?) -> Bool {
+        questionToolNames.contains(normalizedToolName(raw) ?? "")
+    }
 
     private nonisolated func normalizedJSONValue(_ value: Any) -> Any {
         if let codable = value as? AnyCodable {
@@ -176,11 +194,7 @@ extension HookEvent {
     }
 
     private nonisolated var normalizedToolNameForIntervention: String? {
-        guard let tool else { return nil }
-        return tool
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
+        Self.normalizedToolName(tool)
     }
 
     private nonisolated var isQoderWorkQuestionEvent: Bool {

@@ -200,7 +200,7 @@ struct InstanceRow: View {
             return true
         }
         guard let toolName = session.pendingToolName else { return false }
-        return toolName == "AskUserQuestion"
+        return HookEvent.isQuestionToolName(toolName)
     }
 
     private var providerLabel: String {

@@ -1,5 +1,15 @@
 import Foundation
 
+/// Build tag the remote agent reports in its hello message. The app compares it
+/// against RemoteConnectorManager.expectedRemoteAgentBuildTag to decide whether a
+/// deployed remote bridge needs a refresh bootstrap — bump it whenever bridge
+/// behavior changes in a way remote endpoints must pick up (e.g. the notify-only
+/// AskUserQuestion rules). The app does not link IslandShared, so the expected
+/// value is hand-duplicated there; a parity test keeps the two in sync.
+public enum BridgeBuildInfo {
+    public static let buildTag = "2026.07.03"
+}
+
 public enum AgentProvider: String, Codable, CaseIterable, Sendable {
     case claude
     case codex

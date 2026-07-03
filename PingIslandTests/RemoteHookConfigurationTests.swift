@@ -135,19 +135,68 @@ final class RemoteHookConfigurationTests: XCTestCase {
         )
     }
 
-    func testShouldReuseRemoteAgentAfterSuccessfulConnection() {
+    func testShouldReuseRemoteAgentReportingCurrentBuildTag() {
         let endpoint = RemoteEndpoint(
             displayName: "Known Host",
             sshTarget: "dev@example",
-            agentVersion: "1.2.3",
+            agentVersion: RemoteConnectorManager.expectedRemoteAgentBuildTag,
             lastConnectedAt: Date()
         )
 
-        XCTAssertFalse(
-            RemoteConnectorManager.shouldBootstrapRemoteAgent(
+        XCTAssertEqual(
+            RemoteConnectorManager.remoteBootstrapDecision(
                 endpoint: endpoint,
                 forceBootstrap: false
+            ),
+            .skip
+        )
+    }
+
+    func testShouldRefreshRemoteAgentReportingStaleBuildTag() {
+        // Pre-tag bridges report "dev" (no Info.plist) or an old app version; either
+        // way the deployed remote bridge predates current hook behavior (e.g. the
+        // notify-only AskUserQuestion rules) and must be redeployed on next connect.
+        for staleVersion in ["dev", "1.2.3"] {
+            let endpoint = RemoteEndpoint(
+                displayName: "Known Host",
+                sshTarget: "dev@example",
+                agentVersion: staleVersion,
+                lastConnectedAt: Date()
             )
+
+            XCTAssertEqual(
+                RemoteConnectorManager.remoteBootstrapDecision(
+                    endpoint: endpoint,
+                    forceBootstrap: false
+                ),
+                .refresh,
+                "agentVersion \(staleVersion) must trigger a refresh bootstrap"
+            )
+        }
+    }
+
+    func testExpectedRemoteAgentBuildTagMatchesBridgeSource() throws {
+        // The app's expected tag is hand-duplicated from IslandShared's
+        // BridgeBuildInfo.buildTag (the app target does not link IslandShared).
+        // If they drift, stale-agent detection dangles: either every connect
+        // refreshes forever or stale agents are never refreshed.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // PingIslandTests/
+            .deletingLastPathComponent() // repo root
+        let modelsURL = repoRoot.appendingPathComponent("Prototype/Sources/IslandShared/Models.swift")
+        let source = try String(contentsOf: modelsURL, encoding: .utf8)
+
+        guard let declRange = source.range(of: "static let buildTag = \""),
+              let closeRange = source.range(of: "\"", range: declRange.upperBound..<source.endIndex) else {
+            XCTFail("could not locate BridgeBuildInfo.buildTag in Models.swift — update this parser alongside the declaration")
+            return
+        }
+        let bridgeTag = String(source[declRange.upperBound..<closeRange.lowerBound])
+
+        XCTAssertEqual(
+            RemoteConnectorManager.expectedRemoteAgentBuildTag,
+            bridgeTag,
+            "app expectedRemoteAgentBuildTag and bridge BridgeBuildInfo.buildTag diverged — bump both together"
         )
     }
 

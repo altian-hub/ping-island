@@ -766,9 +766,12 @@ private final class RemoteAgentService: @unchecked Sendable {
     }
 
     private func sendHello() {
+        // Report the compiled-in build tag, not Bundle version: the bridge is a bare
+        // binary with no Info.plist, so the Bundle lookup always yielded "dev" and
+        // the app could never tell a stale deployed agent from a current one.
         let hello = RemoteDaemonHello(
             type: "hello",
-            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
+            version: BridgeBuildInfo.buildTag,
             hostname: ProcessInfo.processInfo.hostName
         )
         enqueue(hello, flushImmediately: true)

@@ -6,6 +6,9 @@
 //
 
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.wudanwu.pingisland", category: "HookInstaller")
 
 private enum HookConfigParser {
     static func parseJSONObject(from data: Data) -> [String: Any]? {
@@ -584,6 +587,12 @@ struct HookInstaller {
 
         guard let bundledBridgeURL,
               FileManager.default.isReadableFile(atPath: bundledBridgeURL.path) else {
+            // Without a bundled bridge the deployed copy can silently go stale and
+            // hook behavior stops matching the app (the recurring skew gotcha) —
+            // make that loudly visible instead of returning silently.
+            logger.error(
+                "Bundled bridge binary missing from app bundle — deployed bridge at \(binDirectory.path, privacy: .public) may be stale (version skew)"
+            )
             return
         }
 
@@ -595,10 +604,27 @@ struct HookInstaller {
                 return
             }
 
-            try? FileManager.default.removeItem(at: destinationURL)
+            do {
+                try FileManager.default.removeItem(at: destinationURL)
+            } catch {
+                logger.error(
+                    "Failed to remove stale deployed bridge at \(destinationURL.path, privacy: .public): \(error.localizedDescription, privacy: .public) — hook behavior may not match the app (version skew)"
+                )
+                return
+            }
         }
 
-        try? FileManager.default.copyItem(at: bundledBridgeURL, to: destinationURL)
+        do {
+            try FileManager.default.copyItem(at: bundledBridgeURL, to: destinationURL)
+            logger.notice(
+                "Deployed bundled bridge -> \(destinationURL.path, privacy: .public)"
+            )
+        } catch {
+            logger.error(
+                "Failed to deploy bundled bridge to \(destinationURL.path, privacy: .public): \(error.localizedDescription, privacy: .public) — hook behavior may not match the app (version skew)"
+            )
+            return
+        }
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: destinationURL.path

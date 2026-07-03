@@ -3,6 +3,17 @@ import Foundation
 import os.log
 import Security
 
+/// How the app should treat a remote endpoint's bridge deployment on connect.
+enum RemoteBootstrapDecision: Equatable, Sendable {
+    /// No usable install is known — bootstrap must succeed or the connect fails.
+    case required
+    /// An install exists but its reported build tag is stale/unknown — attempt a
+    /// redeploy, but fall back to the existing install if it fails (staleness is
+    /// a degradation, not a reason to break a previously-working connection).
+    case refresh
+    case skip
+}
+
 @MainActor
 final class RemoteConnectorManager: ObservableObject {
     static let shared = RemoteConnectorManager()
@@ -112,11 +123,12 @@ final class RemoteConnectorManager: ObservableObject {
                     self.applyProbe(probe, to: endpointID, passwordWasUsed: effectivePassword != nil)
                 }
 
-                let shouldBootstrap = await MainActor.run {
-                    self.shouldBootstrapRemoteAgent(endpointID: endpointID, forceBootstrap: forceBootstrap)
+                let bootstrapDecision = await MainActor.run {
+                    self.remoteBootstrapDecision(endpointID: endpointID, forceBootstrap: forceBootstrap)
                 }
 
-                if shouldBootstrap {
+                var didBootstrap = false
+                if bootstrapDecision != .skip {
                     await MainActor.run {
                         self.setState(
                             for: endpointID,
@@ -128,8 +140,23 @@ final class RemoteConnectorManager: ObservableObject {
                             )
                         )
                     }
-                    stage = forceBootstrap ? "bootstrap-forced" : "bootstrap-initial"
-                    try await bootstrapRemoteAgent(endpointID: endpointID, password: effectivePassword, probe: probe)
+                    stage = forceBootstrap
+                        ? "bootstrap-forced"
+                        : (bootstrapDecision == .refresh ? "bootstrap-refresh" : "bootstrap-initial")
+                    do {
+                        try await bootstrapRemoteAgent(endpointID: endpointID, password: effectivePassword, probe: probe)
+                        didBootstrap = true
+                    } catch {
+                        // A refresh redeploys a stale-but-working agent; failing to
+                        // refresh must not break the connection — keep the existing
+                        // install and retry the refresh on the next connect.
+                        guard bootstrapDecision == .refresh else {
+                            throw error
+                        }
+                        logger.error(
+                            "Remote agent refresh bootstrap failed; continuing with the existing install endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                    }
                 } else {
                     logger.notice(
                         "Remote bootstrap skipped endpoint=\(endpoint.id.uuidString, privacy: .public) target=\(endpoint.sshTarget, privacy: .public) reason=reuse_existing_install"
@@ -149,7 +176,7 @@ final class RemoteConnectorManager: ObservableObject {
                     stage = "attach"
                     try await attach(endpointID: endpointID, password: effectivePassword)
                 } catch {
-                    guard !shouldBootstrap else {
+                    guard !didBootstrap else {
                         throw error
                     }
 
@@ -481,6 +508,15 @@ final class RemoteConnectorManager: ObservableObject {
             logger.notice(
                 "Remote daemon hello endpoint=\(endpointID.uuidString, privacy: .public) hostname=\(hello.hostname, privacy: .public) version=\(hello.version, privacy: .public)"
             )
+            if hello.version != Self.expectedRemoteAgentBuildTag {
+                // Stale remote bridges keep pre-fix hook behavior (e.g. holding the
+                // hook socket for native questions, suppressing the CLI picker).
+                // Recording the mismatched tag makes remoteBootstrapDecision refresh
+                // the deployment on the next connect.
+                logger.warning(
+                    "Remote agent build tag mismatch endpoint=\(endpointID.uuidString, privacy: .public) reported=\(hello.version, privacy: .public) expected=\(Self.expectedRemoteAgentBuildTag, privacy: .public) — will refresh bootstrap on next connect"
+                )
+            }
             if var currentEndpoint = endpoint(for: endpointID) {
                 currentEndpoint.agentVersion = hello.version
                 currentEndpoint.lastConnectedAt = Date()
@@ -966,22 +1002,45 @@ final class RemoteConnectorManager: ObservableObject {
         )
     }
 
-    func shouldBootstrapRemoteAgent(endpointID: UUID, forceBootstrap: Bool) -> Bool {
+    /// Build tag the remote agent must report in its hello for its deployed bridge
+    /// to be considered current. Hand-duplicated from IslandShared's
+    /// BridgeBuildInfo.buildTag (the app target does not link IslandShared) — a
+    /// parity test keeps the two in sync. Any other reported value (an older tag,
+    /// or "dev" from pre-tag bridges) triggers a refresh bootstrap on the next
+    /// connect, so bridge-side fixes actually reach remote endpoints.
+    nonisolated static let expectedRemoteAgentBuildTag = "2026.07.03"
+
+    func remoteBootstrapDecision(endpointID: UUID, forceBootstrap: Bool) -> RemoteBootstrapDecision {
         guard let endpoint = endpoint(for: endpointID) else {
-            return forceBootstrap
+            return forceBootstrap ? .required : .skip
         }
 
-        return Self.shouldBootstrapRemoteAgent(endpoint: endpoint, forceBootstrap: forceBootstrap)
+        return Self.remoteBootstrapDecision(endpoint: endpoint, forceBootstrap: forceBootstrap)
+    }
+
+    nonisolated static func remoteBootstrapDecision(
+        endpoint: RemoteEndpoint,
+        forceBootstrap: Bool
+    ) -> RemoteBootstrapDecision {
+        if forceBootstrap {
+            return .required
+        }
+
+        if endpoint.lastBootstrapAt == nil
+            && endpoint.lastConnectedAt == nil
+            && endpoint.agentVersion == nil {
+            return .required
+        }
+
+        if endpoint.agentVersion != expectedRemoteAgentBuildTag {
+            return .refresh
+        }
+
+        return .skip
     }
 
     nonisolated static func shouldBootstrapRemoteAgent(endpoint: RemoteEndpoint, forceBootstrap: Bool) -> Bool {
-        if forceBootstrap {
-            return true
-        }
-
-        return endpoint.lastBootstrapAt == nil
-            && endpoint.lastConnectedAt == nil
-            && endpoint.agentVersion == nil
+        remoteBootstrapDecision(endpoint: endpoint, forceBootstrap: forceBootstrap) != .skip
     }
 
     nonisolated static func shouldAutoReconnectOnLaunch(

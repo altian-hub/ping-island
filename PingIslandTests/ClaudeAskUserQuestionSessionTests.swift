@@ -120,6 +120,42 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
         await store.process(.sessionArchived(sessionId: sessionId))
     }
 
+    func testPermissionRequestOnlyQuestionDoesNotCreateApprovalState() async {
+        // Auto/acceptEdits-mode ordering: the PermissionRequest can be the only
+        // question event the store sees (or arrive before PreToolUse). It must be
+        // dropped at intake, not surfaced as an actionable approval card backed by
+        // no held socket (the socket layer released it notify-only).
+        let sessionId = "claude-permfirst-\(UUID().uuidString)"
+        let store = SessionStore.shared
+
+        await store.process(.hookReceived(makeClaudePermissionRequest(sessionId: sessionId)))
+
+        let session = await store.session(for: sessionId)
+        XCTAssertNil(session?.activePermission)
+        XCTAssertFalse(session?.needsApprovalResponse ?? false)
+
+        await store.process(.sessionArchived(sessionId: sessionId))
+    }
+
+    func testFollowupQuestionPermissionRequestIsIgnoredNotSurfacedAsApproval() async {
+        // The drop guard must match the same predicate as the socket layer
+        // (targetsQuestionTool): a followup-named question PermissionRequest is
+        // also released notify-only, so surfacing it would render dead
+        // Allow/Deny buttons.
+        let sessionId = "claude-followup-\(UUID().uuidString)"
+        let store = SessionStore.shared
+
+        await store.process(
+            .hookReceived(makeClaudePermissionRequest(sessionId: sessionId, tool: "ask_followup_question"))
+        )
+
+        let session = await store.session(for: sessionId)
+        XCTAssertNil(session?.activePermission)
+        XCTAssertFalse(session?.needsApprovalResponse ?? false)
+
+        await store.process(.sessionArchived(sessionId: sessionId))
+    }
+
     func testQoderWorkPermissionRequestIsNotIgnoredAsClaudeDuplicate() async {
         let sessionId = "qoderwork-permission-\(UUID().uuidString)"
         let store = SessionStore.shared
@@ -461,7 +497,10 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
         )
     }
 
-    private func makeClaudePermissionRequest(sessionId: String) -> HookEvent {
+    private func makeClaudePermissionRequest(
+        sessionId: String,
+        tool: String = "AskUserQuestion"
+    ) -> HookEvent {
         HookEvent(
             sessionId: sessionId,
             cwd: "/tmp/project",
@@ -476,7 +515,7 @@ final class ClaudeAskUserQuestionSessionTests: XCTestCase {
             ),
             pid: nil,
             tty: nil,
-            tool: "AskUserQuestion",
+            tool: tool,
             toolInput: [
                 "questions": AnyCodable([
                     [

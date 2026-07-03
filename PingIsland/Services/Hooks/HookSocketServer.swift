@@ -95,6 +95,33 @@ struct HookEvent: Sendable {
                     && toolInput?["questions"] != nil
             )
     }
+
+    /// Whether Island should keep the hook socket open awaiting a decision for this
+    /// event, given the bridge's claim (`bridgeExpectsResponse`, i.e. the envelope's
+    /// expectsResponse). The bridge's blocking read() hangs the calling CLI hook for
+    /// as long as the socket is held, so holding is only correct when someone will
+    /// actually answer.
+    ///
+    /// For a question tool the bridge decides authoritatively whether Island should
+    /// claim the answer: notify-only for native Claude Code so its own CLI picker
+    /// renders, claimed for wrapper clients without one. Trust that here instead of
+    /// OR-ing the `expectsResponse` heuristic, which would always re-assert a
+    /// response and suppress the native picker.
+    ///
+    /// A question arrives in the PreToolUse phase in default mode, but in the
+    /// PermissionRequest phase under auto / acceptEdits (Claude Code fires a
+    /// permission hook for the question too). Match both phases via
+    /// `targetsQuestionTool` — the same predicate the auto-approve guard and
+    /// SessionStore's question-permission drop use — otherwise a question in auto
+    /// mode falls into the OR branch, where the heuristic is true for any
+    /// PermissionRequest, holds the socket open, and hangs the CLI hook forever so
+    /// the native picker never appears.
+    nonisolated func shouldHoldHookSocket(bridgeExpectsResponse: Bool) -> Bool {
+        if targetsQuestionTool {
+            return bridgeExpectsResponse
+        }
+        return bridgeExpectsResponse || expectsResponse
+    }
 }
 
 private extension HookEvent {
@@ -1099,24 +1126,11 @@ class HookSocketServer {
             return
         }
 
-        // For a question tool the bridge decides authoritatively whether Island should
-        // claim the answer (envelope.expectsResponse): notify-only for native Claude Code
-        // so its own CLI picker renders, claimed for wrapper clients without one. Trust
-        // that here instead of OR-ing the heuristic fallback, which would always
-        // re-assert a response and suppress the native picker.
-        //
-        // A question arrives in the PreToolUse phase in default mode, but in the
-        // PermissionRequest phase under auto / acceptEdits (Claude Code fires a permission
-        // hook for the question too). Match both phases via `targetsQuestionTool` — the
-        // same predicate the auto-approve guard uses — otherwise a question in auto mode
-        // falls into the OR branch, where `hookEvent.expectsResponse` is true for any
-        // PermissionRequest, holds the socket open, and hangs the CLI hook forever so the
-        // native picker never appears.
-        let isQuestionTool = envelope.hookEvent.targetsQuestionTool
-        let expectsResponse = isQuestionTool
-            ? envelope.expectsResponse
-            : (envelope.expectsResponse || envelope.hookEvent.expectsResponse)
+        // hookEvent is computed (JSON decode + client-info assembly) — build it once.
         var event = envelope.hookEvent
+        // Hold the socket awaiting a decision, or close it notify-only — the
+        // question-tool rules live in HookEvent.shouldHoldHookSocket.
+        let expectsResponse = event.shouldHoldHookSocket(bridgeExpectsResponse: envelope.expectsResponse)
         logger.debug("Received bridge envelope provider=\(envelope.provider.rawValue, privacy: .public) event=\(envelope.eventType, privacy: .public) session=\(event.sessionId.prefix(8), privacy: .public)")
 
         if event.event == "PreToolUse" && event.toolUseId == nil {

@@ -212,9 +212,9 @@ actor SessionStore {
             )
             return
         }
-        if shouldIgnoreClaudeAskUserQuestionPermissionRequest(event) {
+        if shouldIgnoreClaudeQuestionPermissionRequest(event) {
             Self.logger.notice(
-                "Ignoring duplicate Claude AskUserQuestion permission session=\(sessionId, privacy: .public)"
+                "Ignoring duplicate Claude question-tool permission session=\(sessionId, privacy: .public) tool=\(event.tool ?? "?", privacy: .public)"
             )
             return
         }
@@ -3235,7 +3235,7 @@ actor SessionStore {
         publishState()
     }
 
-    private func shouldIgnoreClaudeAskUserQuestionPermissionRequest(_ event: HookEvent) -> Bool {
+    private func shouldIgnoreClaudeQuestionPermissionRequest(_ event: HookEvent) -> Bool {
         guard event.provider == .claude,
               event.event == "PermissionRequest" else {
             return false
@@ -3250,11 +3250,12 @@ actor SessionStore {
             return false
         }
 
-        let normalizedTool = event.tool?
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        return normalizedTool == "askuserquestion"
+        // Match the socket layer's predicate (targetsQuestionTool: both question
+        // tool names, normalized) so the two layers classify the same event the
+        // same way. A question PermissionRequest is released notify-only at the
+        // socket (HookEvent.shouldHoldHookSocket); surfacing it here would render
+        // an actionable approval card whose Allow/Deny has no held socket to answer.
+        return event.targetsQuestionTool
     }
 
     private func updateCodexPlaceholderPrune(for session: SessionState) {

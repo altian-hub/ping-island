@@ -40,9 +40,20 @@ class SoundManager {
     }
 
     /// Called from AppState.handleEvent() to trigger appropriate sounds
+    /// Hook events that still chime on the mini (battery saver) surface. Mini mode
+    /// promises "alert me only when a session needs a decision", so session start /
+    /// stop / prompt-submit chatter stays silent there.
+    static let lowPowerEventAllowList: Set<String> = ["PermissionRequest"]
+
+    nonisolated static func shouldPlay(eventName: String, isLowPowerMode: Bool) -> Bool {
+        guard isLowPowerMode else { return true }
+        return lowPowerEventAllowList.contains(eventName)
+    }
+
     func handleEvent(_ eventName: String) {
         guard defaults.bool(forKey: "soundEnabled") else { return }
         guard !AppSettings.areReminderNotificationsSuppressed else { return }
+        guard Self.shouldPlay(eventName: eventName, isLowPowerMode: AppSettings.isLowPowerMode) else { return }
         guard let entry = Self.eventSounds.first(where: { $0.event == eventName }) else { return }
         guard defaults.bool(forKey: entry.key) else { return }
         play(entry.sound)

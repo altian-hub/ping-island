@@ -115,8 +115,27 @@ enum NotchDisplayMode: String, CaseIterable, Identifiable {
 enum IslandSurfaceMode: String, CaseIterable, Identifiable {
     case notch
     case floatingPet
+    case mini
+
+    /// UserDefaults key. Declared here (rather than only inside `AppSettingsStore.Keys`)
+    /// so non-main-actor callers can read the persisted mode without hopping actors.
+    static let defaultsKey = "surfaceMode"
+
+    /// The persisted surface mode, readable from any thread/actor.
+    ///
+    /// `AppSettings` is `@MainActor`, but the low-power gates live on the
+    /// `SessionStore` actor and in `nonisolated` statics, which must not `await`
+    /// just to answer "is mini mode on?". `UserDefaults` is thread-safe, so we
+    /// read the raw value directly.
+    static var persisted: IslandSurfaceMode {
+        IslandSurfaceMode(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .notch
+    }
 
     var id: String { rawValue }
+
+    /// Whether this surface skips transcript parsing, usage loading, animated
+    /// chrome and idle rendering — i.e. only wakes up for a decision prompt.
+    var isLowPower: Bool { self == .mini }
 
     var title: String {
         switch self {
@@ -124,6 +143,8 @@ enum IslandSurfaceMode: String, CaseIterable, Identifiable {
             return "Top Island"
         case .floatingPet:
             return "Floating Buddy"
+        case .mini:
+            return "Mini (Battery Saver)"
         }
     }
 
@@ -133,6 +154,8 @@ enum IslandSurfaceMode: String, CaseIterable, Identifiable {
             return "Keep Island centered at the top of the screen."
         case .floatingPet:
             return "Show a draggable Buddy you can place anywhere on screen."
+        case .mini:
+            return "Stay invisible until a session needs Allow / Always / Deny. No session list, no animations, no transcript parsing."
         }
     }
 }
@@ -288,7 +311,7 @@ final class AppSettingsStore: ObservableObject {
         static let notchPetStyle = "notchPetStyle"
         static let notchDisplayMode = "notchDisplayMode"
         static let mascotOverrides = "mascotOverrides"
-        static let surfaceMode = "surfaceMode"
+        static let surfaceMode = IslandSurfaceMode.defaultsKey
         static let floatingPetAnchor = "floatingPetAnchor"
     }
 
@@ -887,6 +910,12 @@ enum AppSettings {
         set { shared.surfaceMode = newValue }
     }
 
+    /// Whether the app is running the battery-saver surface. Prefer this over
+    /// comparing `surfaceMode` so the intent reads at every call site.
+    static var isLowPowerMode: Bool {
+        shared.surfaceMode.isLowPower
+    }
+
     static var floatingPetAnchor: FloatingPetAnchor? {
         get { shared.floatingPetAnchor }
         set { shared.floatingPetAnchor = newValue }
@@ -1017,5 +1046,16 @@ enum AppSettings {
         }
 
         return nil
+    }
+}
+
+extension AppSettings {
+    /// Low-power check that does not require the main actor.
+    ///
+    /// Used by the `SessionStore` actor and by `nonisolated` statics on
+    /// `SessionMonitor`, which gate expensive work (transcript watching,
+    /// JSONL re-parsing, usage loading) on the mini surface.
+    nonisolated static var isLowPowerModeEnabled: Bool {
+        IslandSurfaceMode.persisted.isLowPower
     }
 }

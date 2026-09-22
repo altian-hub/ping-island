@@ -20,7 +20,7 @@ final class SessionMonitorCodexWatcherTests: XCTestCase {
             ingress: .hookBridge
         )
 
-        XCTAssertTrue(SessionMonitor.shouldWatchTranscript(for: event, phase: .idle))
+        XCTAssertTrue(SessionMonitor.shouldWatchTranscript(for: event, phase: .idle, isLowPowerMode: false))
     }
 
     func testCodexStopEventsStopTranscriptWatcher() {

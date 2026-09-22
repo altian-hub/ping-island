@@ -1698,6 +1698,13 @@ actor SessionStore {
     // MARK: - File Sync Scheduling
 
     private func scheduleFileSync(sessionId: String, cwd: String, explicitFilePath: String? = nil) {
+        // Mini mode renders no transcript, so skip the parse. This is the choke
+        // point on purpose: hook events (`processHookEvent`), the JSONL watchers
+        // (`requestFileSync`), session teardown (`scheduleFinalSessionSync`) and
+        // OpenClaw polling all funnel through here, and gating only one of them
+        // leaves ConversationParser running on every tool call.
+        guard !AppSettings.isLowPowerModeEnabled else { return }
+
         // Cancel existing sync
         cancelPendingSync(sessionId: sessionId)
 
@@ -1892,6 +1899,9 @@ actor SessionStore {
         clientInfo: SessionClientInfo,
         cwd: String
     ) {
+        // See scheduleFileSync: the Codex rollout parse is the same cost.
+        guard !AppSettings.isLowPowerModeEnabled else { return }
+
         cancelPendingSync(sessionId: sessionId)
 
         pendingSyncs[sessionId] = Task { [weak self, syncDebounceNs] in
@@ -2186,6 +2196,11 @@ actor SessionStore {
     /// Starts a JSONL interrupt watcher for an actively-working Codex session discovered
     /// via the App Server (hook-ingress sessions already get watchers in `processHookEvent`).
     private func startCodexInterruptWatcherIfActive(for session: SessionState, resolvedSessionId: String) {
+        // Codex snapshots arrive continuously from the app-server, and each one
+        // would re-arm a DispatchSource watcher that mini mode has no use for —
+        // re-creating exactly what WindowManager.ensureMiniPrompt tore down.
+        guard !AppSettings.isLowPowerModeEnabled else { return }
+
         guard session.phase == .processing
             || session.phase == .waitingForInput
             || session.phase.isWaitingForApproval else {

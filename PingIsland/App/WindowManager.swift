@@ -18,6 +18,8 @@ class WindowManager {
     private var floatingPetController: FloatingPetWindowController?
     private var floatingPetSessionMonitor: SessionMonitor?
     private var floatingPetViewModel: NotchViewModel?
+    private var miniPromptController: MiniPromptWindowController?
+    private var miniPromptSessionMonitor: SessionMonitor?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -41,13 +43,54 @@ class WindowManager {
     private func applySurfaceMode() {
         switch AppSettings.surfaceMode {
         case .notch:
+            dismissMiniPrompt()
             dismissFloatingPet { [weak self] in
                 self?.ensureDockedNotch()
             }
         case .floatingPet:
+            dismissMiniPrompt()
             dismissDockedNotch()
             ensureFloatingPet()
+        case .mini:
+            dismissDockedNotch()
+            dismissFloatingPet { [weak self] in
+                self?.ensureMiniPrompt()
+            }
         }
+    }
+
+    // MARK: - Mini (Battery Saver)
+
+    private func ensureMiniPrompt() {
+        // Reached via dismissFloatingPet's 0.2s deferred completion, by which point
+        // the user may have switched modes again — don't install mini over whatever
+        // surface is now current.
+        guard AppSettings.surfaceMode == .mini else { return }
+        guard miniPromptController == nil else { return }
+
+        // Transcript watchers started before the switch keep a DispatchSource (and
+        // a parse on every append) alive; mini mode has no use for either.
+        InterruptWatcherManager.shared.stopAll()
+
+        let sessionMonitor = SessionMonitor()
+        sessionMonitor.startMonitoring()
+        miniPromptSessionMonitor = sessionMonitor
+
+        miniPromptController = MiniPromptWindowController(
+            sessionMonitor: sessionMonitor,
+            onLeaveMiniMode: { [weak self] in
+                AppSettings.surfaceMode = .notch
+                self?.applySurfaceMode()
+            }
+        )
+    }
+
+    private func dismissMiniPrompt() {
+        guard miniPromptController != nil else { return }
+        miniPromptController?.dismiss()
+        miniPromptController = nil
+        miniPromptSessionMonitor?.stopMonitoring()
+        miniPromptSessionMonitor = nil
     }
 
     // MARK: - Docked Notch

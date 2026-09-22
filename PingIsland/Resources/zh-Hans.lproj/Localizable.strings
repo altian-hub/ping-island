@@ -344,3 +344,11 @@
 "Linux 远程 bridge 下载地址无效：%@" = "Linux 远程 bridge 下载地址无效：%@";
 "无法从 GitHub Release 下载 Linux 远程 bridge（HTTP %lld）" = "无法从 GitHub Release 下载 Linux 远程 bridge（HTTP %lld）";
 "正在安装远程桥接… %@ (%@)" = "正在安装远程桥接… %@ (%@)";
+
+/* Mini (battery saver) surface */
+"迷你模式" = "迷你模式";
+"没有待处理的请求" = "没有待处理的请求";
+"%lld 个请求等待处理" = "%lld 个请求等待处理";
+"退出迷你模式" = "退出迷你模式";
+"设置" = "设置…";
+"退出" = "退出";

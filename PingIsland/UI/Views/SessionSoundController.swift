@@ -18,12 +18,25 @@ import Foundation
 final class SessionSoundController {
     private var evaluator = SessionSoundTransitionEvaluator()
 
+    /// Events this controller is allowed to ring for. The mini (battery saver)
+    /// surface passes `[.attentionRequired]` so only decision prompts make noise;
+    /// the notch and buddy surfaces keep the full set.
+    private let allowedEvents: Set<NotificationEvent>
+
+    init(allowedEvents: Set<NotificationEvent> = Set(NotificationEvent.allCases)) {
+        self.allowedEvents = allowedEvents
+    }
+
     /// Evaluate the latest visible-session snapshot, play a notification sound if a
     /// new sound-worthy transition occurred, and return the acted-on outcome (for
     /// diagnostics/logging at the call site).
+    ///
+    /// The evaluator is always fed — it is delta-based, so skipping calls would
+    /// desync its baseline — but suppressed events return `nil` without playing.
     @discardableResult
     func handle(_ instances: [SessionState]) -> SessionSoundTransitionEvaluator.Outcome? {
         guard let outcome = evaluator.evaluate(instances) else { return nil }
+        guard allowedEvents.contains(outcome.event) else { return nil }
         let triggered = instances.filter { outcome.sessionIds.contains($0.stableId) }
         playEventSoundIfNeeded(outcome.event, sessions: triggered)
         return outcome

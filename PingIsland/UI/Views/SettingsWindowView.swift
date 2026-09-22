@@ -936,7 +936,7 @@ private struct SettingsPanelContentView: View {
 
                 SettingsInfoLine(
                     title: "Presentation mode",
-                    subtitle: "Switch between the docked Top Island and a draggable Floating Buddy."
+                    subtitle: "Docked Top Island, a draggable Floating Buddy, or Mini — a battery saver that stays hidden until a session needs Allow / Always / Deny."
                 ) {
                     Picker("", selection: $settings.surfaceMode) {
                         ForEach(IslandSurfaceMode.allCases) { candidate in

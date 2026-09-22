@@ -57,6 +57,17 @@ class SessionMonitor: ObservableObject {
 
     func refreshUsageState() {
         usageRefreshTask?.cancel()
+
+        // The usage loaders walk every transcript under ~/.claude/projects (and the
+        // Codex equivalent), which is by far the most expensive recurring work the
+        // app does. Mini mode never renders the usage strip, so don't pay for it.
+        guard !AppSettings.isLowPowerMode else {
+            usageRefreshTask = nil
+            claudeUsageSnapshot = nil
+            codexUsageSnapshot = nil
+            return
+        }
+
         usageRefreshTask = Task { [weak self] in
             guard let self else { return }
 
@@ -627,7 +638,17 @@ class SessionMonitor: ObservableObject {
         return snapshot
     }
 
-    nonisolated static func shouldWatchTranscript(for event: HookEvent, phase: SessionPhase) -> Bool {
+    /// - Parameter isLowPowerMode: injected so tests don't depend on the host app's
+    ///   real `surfaceMode` default, which is process-wide and leaks between cases.
+    nonisolated static func shouldWatchTranscript(
+        for event: HookEvent,
+        phase: SessionPhase,
+        isLowPowerMode: Bool = AppSettings.isLowPowerModeEnabled
+    ) -> Bool {
+        // Mini mode surfaces decision prompts only, and those arrive over the hook
+        // socket. Watching the JSONL means a DispatchSource per live session plus an
+        // incremental ConversationParser pass on every append — pure waste here.
+        guard !isLowPowerMode else { return false }
         guard event.ingress != .remoteBridge else { return false }
         switch event.provider {
         case .claude:

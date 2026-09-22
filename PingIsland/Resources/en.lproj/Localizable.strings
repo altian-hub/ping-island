@@ -345,3 +345,11 @@
 "Linux 远程 bridge 下载地址无效：%@" = "The Linux remote bridge download URL is invalid: %@";
 "无法从 GitHub Release 下载 Linux 远程 bridge（HTTP %lld）" = "Failed to download the Linux remote bridge from GitHub Release (HTTP %lld)";
 "正在安装远程桥接… %@ (%@)" = "Installing remote bridge… %@ (%@)";
+
+/* Mini (battery saver) surface */
+"迷你模式" = "Mini mode";
+"没有待处理的请求" = "No pending requests";
+"%lld 个请求等待处理" = "%lld requests waiting";
+"退出迷你模式" = "Exit mini mode";
+"设置" = "Settings…";
+"退出" = "Quit";

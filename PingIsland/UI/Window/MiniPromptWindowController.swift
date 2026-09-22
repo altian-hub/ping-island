@@ -93,13 +93,24 @@ final class MiniPromptWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Tear the surface down for good. Everything here is synchronous on purpose:
+    /// the caller (`WindowManager.dismissMiniPrompt`) drops its reference the moment
+    /// this returns, so anything deferred with `[weak self]` would simply never run —
+    /// leaving an orphaned NSHostingView in a live panel, which then loops on
+    /// constraint invalidation until AppKit throws.
     func dismiss() {
-        hidePanel()
+        cancellables.removeAll()
+
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
         statusItem = nil
-        cancellables.removeAll()
+
+        isShowingPrompt = false
+        shownSignature = nil
+        window?.orderOut(nil)
+        window?.contentViewController = nil
+        window?.close()
     }
 
     // MARK: - Prompt Presentation
@@ -187,8 +198,8 @@ final class MiniPromptWindowController: NSWindowController {
         // but only once the button action that triggered this has left the stack —
         // the buddy surface defers teardown for the same reason.
         DispatchQueue.main.async { [weak self] in
-            guard self?.isShowingPrompt == false else { return }
-            self?.window?.contentViewController = nil
+            guard let self, !self.isShowingPrompt else { return }
+            self.window?.contentViewController = nil
         }
     }
 

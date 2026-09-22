@@ -78,9 +78,12 @@ class WindowManager {
 
         miniPromptController = MiniPromptWindowController(
             sessionMonitor: sessionMonitor,
-            onLeaveMiniMode: { [weak self] in
+            onLeaveMiniMode: {
+                // Only flip the setting. The `$surfaceMode` sink applies it on the
+                // next runloop turn — calling applySurfaceMode() directly here would
+                // deallocate the mini controller from inside its own menu action,
+                // while that @objc method is still on the stack.
                 AppSettings.surfaceMode = .notch
-                self?.applySurfaceMode()
             }
         )
     }

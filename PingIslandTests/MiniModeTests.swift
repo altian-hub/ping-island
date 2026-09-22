@@ -87,7 +87,7 @@ final class MiniModeTests: XCTestCase {
 
         let (prompts, _) = MiniPromptPresenter.visiblePrompts(
             from: [older, newest, newer],
-            dismissing: []
+            dismissing: [:]
         )
         XCTAssertEqual(prompts.map(\.stableId), [older.stableId, newer.stableId, newest.stableId])
     }
@@ -99,10 +99,13 @@ final class MiniModeTests: XCTestCase {
         // User answers the displayed (longest-waiting) prompt; store hasn't caught up.
         let (prompts, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: [first, second],
-            dismissing: [MiniPromptPresenter.promptIdentity(first)]
+            dismissing: [MiniPromptPresenter.promptIdentity(first): Date()]
         )
         XCTAssertEqual(prompts.map(\.stableId), [second.stableId])
-        XCTAssertEqual(stillDismissed, [MiniPromptPresenter.promptIdentity(first)])
+        XCTAssertEqual(
+            Set(stillDismissed.keys),
+            [MiniPromptPresenter.promptIdentity(first)]
+        )
     }
 
     func testAnsweringTwoPromptsQuicklyDoesNotResurrectTheFirst() {
@@ -114,8 +117,8 @@ final class MiniModeTests: XCTestCase {
         let (prompts, _) = MiniPromptPresenter.visiblePrompts(
             from: [first, second],
             dismissing: [
-                MiniPromptPresenter.promptIdentity(first),
-                MiniPromptPresenter.promptIdentity(second)
+                MiniPromptPresenter.promptIdentity(first): Date(),
+                MiniPromptPresenter.promptIdentity(second): Date()
             ]
         )
         XCTAssertTrue(prompts.isEmpty, "both answered prompts must stay hidden")
@@ -126,7 +129,7 @@ final class MiniModeTests: XCTestCase {
 
         let (prompts, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: [resolved],
-            dismissing: [MiniPromptPresenter.promptIdentity(resolved)]
+            dismissing: [MiniPromptPresenter.promptIdentity(resolved): Date()]
         )
         XCTAssertTrue(prompts.isEmpty)
         XCTAssertTrue(stillDismissed.isEmpty, "stale ids must not accumulate")
@@ -144,7 +147,7 @@ final class MiniModeTests: XCTestCase {
             toolUseId: "tool-2", toolName: "Write", toolInput: nil, receivedAt: Date()
         )))
 
-        let dismissed: Set<String> = [MiniPromptPresenter.promptIdentity(p1)]
+        let dismissed = [MiniPromptPresenter.promptIdentity(p1): Date()]
         let (prompts, _) = MiniPromptPresenter.visiblePrompts(from: [p2], dismissing: dismissed)
 
         XCTAssertEqual(
@@ -165,6 +168,46 @@ final class MiniModeTests: XCTestCase {
             MiniPromptPresenter.promptIdentity(p1),
             MiniPromptPresenter.promptIdentity(p2)
         )
+    }
+
+    func testDismissedPromptReappearsOnceTheTTLExpires() {
+        // Several dispatch paths can return without ever reaching the store. In
+        // mini there is no other surface, so a permanently-hidden prompt means a
+        // permanently-blocked agent.
+        let state = session("a", phase: waitingForApproval())
+        let identity = MiniPromptPresenter.promptIdentity(state)
+        let answeredAt = Date()
+
+        let (stillHidden, _) = MiniPromptPresenter.visiblePrompts(
+            from: [state],
+            dismissing: [identity: answeredAt],
+            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL - 1)
+        )
+        XCTAssertTrue(stillHidden.isEmpty, "should stay hidden inside the TTL")
+
+        let (resurfaced, stillDismissed) = MiniPromptPresenter.visiblePrompts(
+            from: [state],
+            dismissing: [identity: answeredAt],
+            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL + 1)
+        )
+        XCTAssertEqual(resurfaced.map(\.stableId), [state.stableId])
+        XCTAssertTrue(stillDismissed.isEmpty, "expired entries must be pruned")
+    }
+
+    func testTTLExpiryOfOnePromptDoesNotResurfaceAnother() {
+        let a = session("a", phase: waitingForApproval(at: Date(timeIntervalSince1970: 10)))
+        let b = session("b", phase: waitingForApproval(at: Date(timeIntervalSince1970: 20)))
+        let now = Date()
+
+        let (prompts, _) = MiniPromptPresenter.visiblePrompts(
+            from: [a, b],
+            dismissing: [
+                MiniPromptPresenter.promptIdentity(a): now.addingTimeInterval(-(MiniPromptPresenter.dismissalTTL + 1)),
+                MiniPromptPresenter.promptIdentity(b): now
+            ],
+            now: now
+        )
+        XCTAssertEqual(prompts.map(\.stableId), [a.stableId])
     }
 
     // MARK: - Panel stability (clicks must not be eaten)

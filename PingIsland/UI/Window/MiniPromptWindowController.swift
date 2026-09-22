@@ -61,10 +61,15 @@ final class MiniPromptWindowController: NSWindowController {
     /// touch the panel when what it should display actually changed.
     private var shownSignature: String?
 
-    /// Prompts the user has just answered. The decisions are already committed, so
-    /// hide them immediately rather than waiting for the store round-trip to come
-    /// back through Combine — otherwise the card sits there looking unclicked.
-    private var optimisticallyDismissedIds: Set<String> = []
+    /// Prompts the user has just answered, and when. The decisions are already
+    /// committed, so hide them immediately rather than waiting for the store
+    /// round-trip through Combine — otherwise the card sits there looking
+    /// unclicked. Bounded by `MiniPromptPresenter.dismissalTTL`.
+    private var optimisticallyDismissed: [String: Date] = [:]
+
+    /// Re-runs the prompt evaluation once a dismissal can have expired. Without it
+    /// an expired entry would only be noticed on the next incidental publish.
+    private var dismissalExpiryTask: Task<Void, Never>?
 
     /// Prompt count currently reflected in the menu bar, so repeated publishes
     /// don't reallocate the image and menu on every hook event.
@@ -100,6 +105,8 @@ final class MiniPromptWindowController: NSWindowController {
     /// constraint invalidation until AppKit throws.
     func dismiss() {
         cancellables.removeAll()
+        dismissalExpiryTask?.cancel()
+        dismissalExpiryTask = nil
 
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
@@ -120,9 +127,9 @@ final class MiniPromptWindowController: NSWindowController {
 
         let (prompts, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: instances,
-            dismissing: optimisticallyDismissedIds
+            dismissing: optimisticallyDismissed
         )
-        optimisticallyDismissedIds = stillDismissed
+        optimisticallyDismissed = stillDismissed
 
         miniLogger.debug(
             "apply instances=\(instances.count, privacy: .public) prompts=\(prompts.count, privacy: .public)"
@@ -183,10 +190,23 @@ final class MiniPromptWindowController: NSWindowController {
     }
 
     private func handleDecision(for promptIdentity: String) {
-        optimisticallyDismissedIds.insert(promptIdentity)
+        optimisticallyDismissed[promptIdentity] = Date()
         pinnedStableId = nil
         shownSignature = nil
         hidePanel()
+        scheduleDismissalExpiryCheck()
+    }
+
+    /// Wake up once the oldest dismissal can have expired and re-evaluate, so a
+    /// decision that never reached the store brings its card back even if no other
+    /// session state changes in the meantime.
+    private func scheduleDismissalExpiryCheck() {
+        dismissalExpiryTask?.cancel()
+        dismissalExpiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(MiniPromptPresenter.dismissalTTL + 0.5))
+            guard !Task.isCancelled, let self else { return }
+            self.apply(self.sessionMonitor.instances)
+        }
     }
 
     private func hidePanel() {

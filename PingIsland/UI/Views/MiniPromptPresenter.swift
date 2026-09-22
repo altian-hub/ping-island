@@ -63,21 +63,40 @@ enum MiniPromptPresenter {
         return "\(session.stableId)|\(decisionId)"
     }
 
+    /// How long a just-answered prompt stays hidden before mini assumes the
+    /// decision never landed and surfaces it again.
+    ///
+    /// Hiding optimistically is only safe because it is bounded. Several dispatch
+    /// paths can return without ever reaching the store — `approvePermission` and
+    /// `denyPermission` bail when the session or its `activePermission` has already
+    /// gone, `answerIntervention` bails on a malformed tool input, and the Codex
+    /// path bails when its pending-request map was cleared. In the notch the card
+    /// would simply stay put; in mini there is no other surface, so without a
+    /// timeout that agent would stay blocked with nothing on screen.
+    static let dismissalTTL: TimeInterval = 8
+
     /// The prompts to show, with just-answered ones removed.
     ///
-    /// `dismissed` holds decisions the user has already made but that the store has
-    /// not caught up with yet. It is a set of `promptIdentity` values: answering two
-    /// queued prompts in quick succession would otherwise let the first flash back.
-    /// Entries that are no longer live are pruned so the set can't grow unbounded.
+    /// `dismissed` maps `promptIdentity` to the moment the user decided. Keyed by
+    /// prompt rather than session (answering two queued prompts in quick succession
+    /// would otherwise let the first flash back), and timestamped so a decision that
+    /// silently failed to dispatch re-surfaces after `dismissalTTL`. Entries that
+    /// are no longer live, or that have expired, are pruned.
     static func visiblePrompts(
         from instances: [SessionState],
-        dismissing dismissed: Set<String>
-    ) -> (prompts: [SessionState], stillDismissed: Set<String>) {
+        dismissing dismissed: [String: Date],
+        now: Date = Date()
+    ) -> (prompts: [SessionState], stillDismissed: [String: Date]) {
         let prompts = promptSessions(from: instances)
         let liveIdentities = Set(prompts.map(promptIdentity))
-        let stillDismissed = dismissed.intersection(liveIdentities)
+
+        let stillDismissed = dismissed.filter { identity, dismissedAt in
+            liveIdentities.contains(identity)
+                && now.timeIntervalSince(dismissedAt) < dismissalTTL
+        }
+
         return (
-            prompts.filter { !stillDismissed.contains(promptIdentity($0)) },
+            prompts.filter { stillDismissed[promptIdentity($0)] == nil },
             stillDismissed
         )
     }

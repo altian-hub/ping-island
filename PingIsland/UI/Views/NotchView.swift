@@ -563,6 +563,17 @@ struct NotchView: View {
                 .padding(.leading, 14)
             }
 
+            // Left-aligned: the right-hand cluster grows leftward from the panel
+            // edge, and with five buttons it reached the physical notch (~±100pt
+            // from center). Parking the mute button in the otherwise-empty left
+            // side keeps every control visible and clear of the notch.
+            NotchTemporaryMuteButton(
+                isActive: areReminderNotificationsSuppressed,
+                action: activateTemporaryReminderMute,
+                helpText: temporaryMuteButtonHelpText
+            )
+            .padding(.leading, 12)
+
             Color.clear
                 .frame(maxWidth: .infinity, minHeight: closedNotchSize.height)
                 .contentShape(Rectangle())
@@ -571,15 +582,11 @@ struct NotchView: View {
                 }
                 .help("Click to collapse")
 
-            NotchTemporaryMuteButton(
-                isActive: areReminderNotificationsSuppressed,
-                action: activateTemporaryReminderMute,
-                helpText: temporaryMuteButtonHelpText
-            )
-
             NotchCleanDeadSessionsButton(action: cleanDeadSessions)
 
             NotchDetachToBuddyButton(action: switchToFloatingBuddy)
+
+            NotchEnterMiniModeButton(action: switchToMiniMode)
 
             NotchSettingsButton(
                 hasUnseenUpdate: updateManager.hasUnseenUpdate,
@@ -1125,6 +1132,11 @@ struct NotchView: View {
         AppSettings.surfaceMode = .floatingPet
     }
 
+    private func switchToMiniMode() {
+        viewModel.notchClose()
+        AppSettings.surfaceMode = .mini
+    }
+
     private func cleanDeadSessions() {
         sessionMonitor.cleanDeadSessions()
     }
@@ -1206,6 +1218,34 @@ private struct NotchDetachToBuddyButton: View {
         .buttonStyle(.plain)
         .help("Detach to Floating Buddy")
         .accessibilityLabel("Detach to Floating Buddy")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+private struct NotchEnterMiniModeButton: View {
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isHovering ? Color.black : Color.white.opacity(0.92))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isHovering ? Color.white.opacity(0.95) : Color.white.opacity(0.1))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Mini mode (battery saver)")
+        .accessibilityLabel("Switch to mini mode")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovering = hovering

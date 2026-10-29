@@ -27,6 +27,14 @@ struct SessionSoundTransitionEvaluator {
         let sessionIds: [String]
     }
 
+    /// Whether the global auto-approve setting is on. Injected so tests don't
+    /// depend on the host app's defaults; the app reads the live setting.
+    private let globalAutoApprove: () -> Bool
+
+    init(globalAutoApprove: @escaping () -> Bool = { AppSettings.isAutoApproveAllClaudePermissionsEnabled }) {
+        self.globalAutoApprove = globalAutoApprove
+    }
+
     private var hasPrimed = false
     private var previousProcessingIds: Set<String> = []
     private var previousAttentionSoundIds: Set<String> = []
@@ -38,7 +46,7 @@ struct SessionSoundTransitionEvaluator {
         session.phase == .processing || session.phase == .compacting
     }
 
-    private static func isAttention(_ session: SessionState) -> Bool {
+    private static func isAttention(_ session: SessionState, globalAutoApprove: Bool) -> Bool {
         // A question (AskUserQuestion / `request_user_input`) is never auto-resolved —
         // auto-approve only answers permission prompts — so it must ring even for
         // auto-approve sessions, else the session silently stalls on the question.
@@ -47,7 +55,7 @@ struct SessionSoundTransitionEvaluator {
         // `.processing`, so a phase-gated check would miss the attention cue.
         if session.needsQuestionResponse { return true }
         // Auto-approve sessions resolve their own approval prompts; don't ring for those.
-        guard !session.autoApprovePermissions else { return false }
+        guard !session.autoApprovesPermissions(globalAutoApprove: globalAutoApprove) else { return false }
         return session.needsApprovalResponse
     }
 
@@ -60,7 +68,10 @@ struct SessionSoundTransitionEvaluator {
     /// mirroring the original `hasPrimedSoundTransitions` behavior.
     mutating func evaluate(_ instances: [SessionState]) -> Outcome? {
         let processingSessions = instances.filter { Self.isProcessing($0) }
-        let attentionSessions = instances.filter { Self.isAttention($0) }
+        let globalAutoApprove = globalAutoApprove()
+        let attentionSessions = instances.filter {
+            Self.isAttention($0, globalAutoApprove: globalAutoApprove)
+        }
         let completedSessions = instances.filter { SessionCompletionStateEvaluator.isCompletedReadySession($0) }
         let resourceLimitedSessions = instances.filter { $0.phase == .compacting }
 

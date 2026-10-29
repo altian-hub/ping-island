@@ -903,6 +903,20 @@ struct SessionState: Equatable, Identifiable, Sendable {
         scopedApprovalAction != nil
     }
 
+    /// Whether this session's permission prompts are answered by Island without the
+    /// user: either "Always Allow" was clicked for it, or the global setting covers
+    /// every Claude Code session. Questions are never auto-answered.
+    ///
+    /// The global flag is injected so tests don't depend on the host app's defaults.
+    nonisolated func autoApprovesPermissions(
+        globalAutoApprove: Bool = AppSettings.isAutoApproveAllClaudePermissionsEnabled
+    ) -> Bool {
+        guard provider == .claude, clientInfo.kind == .claudeCode else {
+            return autoApprovePermissions
+        }
+        return autoApprovePermissions || globalAutoApprove
+    }
+
     /// The primary UI keeps recently-active conversations "warm" for a short grace
     /// window so a fresh follow-up does not immediately look dormant once the provider
     /// sends an idle heartbeat.

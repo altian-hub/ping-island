@@ -38,7 +38,7 @@ final class MiniModePipelineTests: XCTestCase {
             "session was hidden from the primary UI, so no surface can render it"
         )
         XCTAssertTrue(
-            MiniPromptPresenter.isPrompting(resolved),
+            MiniPromptPresenter.isPrompting(resolved, globalAutoApprove: false),
             "session reached the UI but the mini presenter did not treat it as a prompt"
         )
 

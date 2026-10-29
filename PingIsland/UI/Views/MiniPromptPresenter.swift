@@ -17,7 +17,12 @@ enum MiniPromptPresenter {
     /// Mini mode deliberately ignores "processing", "completed" and every other
     /// informational phase — the whole point of the surface is that it stays dark
     /// until there is a Allow / Always / Deny (or a question) to answer.
-    static func isPrompting(_ session: SessionState) -> Bool {
+    ///
+    /// `globalAutoApprove` is injected so tests don't depend on the host app's defaults.
+    static func isPrompting(
+        _ session: SessionState,
+        globalAutoApprove: Bool = AppSettings.isAutoApproveAllClaudePermissionsEnabled
+    ) -> Bool {
         if let intervention = session.intervention, intervention.kind == .question {
             // An answered question that is waiting on the client to pick the thread
             // back up is no longer the user's move.
@@ -28,7 +33,7 @@ enum MiniPromptPresenter {
 
         // Auto-approve sessions resolve their own permission prompts within
         // milliseconds; surfacing them would flash a panel the user can't use.
-        return !session.autoApprovePermissions
+        return !session.autoApprovesPermissions(globalAutoApprove: globalAutoApprove)
     }
 
     /// Sessions blocking on a decision, longest-waiting first.
@@ -36,9 +41,12 @@ enum MiniPromptPresenter {
     /// Oldest-first is deliberate: every one of these agents is stalled on the hook
     /// socket until answered, so serving the freshest prompt first would leave the
     /// agent that has been blocked longest blocked the longest of all.
-    static func promptSessions(from instances: [SessionState]) -> [SessionState] {
+    static func promptSessions(
+        from instances: [SessionState],
+        globalAutoApprove: Bool = AppSettings.isAutoApproveAllClaudePermissionsEnabled
+    ) -> [SessionState] {
         instances
-            .filter(isPrompting)
+            .filter { isPrompting($0, globalAutoApprove: globalAutoApprove) }
             .sorted { lhs, rhs in
                 let lhsAt = lhs.attentionRequestedAt ?? lhs.lastActivity
                 let rhsAt = rhs.attentionRequestedAt ?? rhs.lastActivity
@@ -85,9 +93,10 @@ enum MiniPromptPresenter {
     static func visiblePrompts(
         from instances: [SessionState],
         dismissing dismissed: [String: Date],
-        now: Date = Date()
+        now: Date = Date(),
+        globalAutoApprove: Bool = AppSettings.isAutoApproveAllClaudePermissionsEnabled
     ) -> (prompts: [SessionState], stillDismissed: [String: Date]) {
-        let prompts = promptSessions(from: instances)
+        let prompts = promptSessions(from: instances, globalAutoApprove: globalAutoApprove)
         let liveIdentities = Set(prompts.map(promptIdentity))
 
         let stillDismissed = dismissed.filter { identity, dismissedAt in
@@ -123,9 +132,10 @@ enum MiniPromptPresenter {
     /// the panel doesn't swap out from under a half-filled question form.
     static func activePrompt(
         from instances: [SessionState],
-        preferring pinnedStableId: String?
+        preferring pinnedStableId: String?,
+        globalAutoApprove: Bool = AppSettings.isAutoApproveAllClaudePermissionsEnabled
     ) -> SessionState? {
-        let prompts = promptSessions(from: instances)
+        let prompts = promptSessions(from: instances, globalAutoApprove: globalAutoApprove)
         if let pinnedStableId,
            let pinned = prompts.first(where: { $0.stableId == pinnedStableId }) {
             return pinned

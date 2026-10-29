@@ -313,6 +313,7 @@ final class AppSettingsStore: ObservableObject {
         static let mascotOverrides = "mascotOverrides"
         static let surfaceMode = IslandSurfaceMode.defaultsKey
         static let floatingPetAnchor = "floatingPetAnchor"
+        static let autoApproveAllClaudePermissions = AppSettings.autoApproveAllClaudePermissionsKey
     }
 
     // MARK: - Published Settings
@@ -479,6 +480,13 @@ final class AppSettingsStore: ObservableObject {
         didSet {
             guard !isBootstrapping else { return }
             defaults.set(smartSuppression, forKey: Keys.smartSuppression)
+        }
+    }
+
+    @Published var autoApproveAllClaudePermissions: Bool {
+        didSet {
+            guard !isBootstrapping else { return }
+            defaults.set(autoApproveAllClaudePermissions, forKey: Keys.autoApproveAllClaudePermissions)
         }
     }
 
@@ -740,6 +748,7 @@ final class AppSettingsStore: ObservableObject {
         _autoHideWhenIdle = Published(initialValue: defaults.object(forKey: Keys.autoHideWhenIdle) as? Bool ?? false)
         _autoCollapseOnLeave = Published(initialValue: defaults.object(forKey: Keys.autoCollapseOnLeave) as? Bool ?? true)
         _smartSuppression = Published(initialValue: defaults.object(forKey: Keys.smartSuppression) as? Bool ?? true)
+        _autoApproveAllClaudePermissions = Published(initialValue: defaults.bool(forKey: Keys.autoApproveAllClaudePermissions))
         _autoOpenCompletionPanel = Published(initialValue: defaults.object(forKey: Keys.autoOpenCompletionPanel) as? Bool ?? true)
         _showAgentDetail = Published(initialValue: defaults.object(forKey: Keys.showAgentDetail) as? Bool ?? true)
         subagentVisibilityModeStorage = SubagentVisibilityMode(
@@ -840,6 +849,11 @@ enum AppSettings {
     static var smartSuppression: Bool {
         get { shared.smartSuppression }
         set { shared.smartSuppression = newValue }
+    }
+
+    static var autoApproveAllClaudePermissions: Bool {
+        get { shared.autoApproveAllClaudePermissions }
+        set { shared.autoApproveAllClaudePermissions = newValue }
     }
 
     static var autoOpenCompletionPanel: Bool {
@@ -1057,5 +1071,14 @@ extension AppSettings {
     /// JSONL re-parsing, usage loading) on the mini surface.
     nonisolated static var isLowPowerModeEnabled: Bool {
         IslandSurfaceMode.persisted.isLowPower
+    }
+
+    nonisolated static let autoApproveAllClaudePermissionsKey = "autoApproveAllClaudePermissions"
+
+    /// Global "Always Allow" for every Claude Code session, readable off the main
+    /// actor for the same reason as `isLowPowerModeEnabled`: the approve decision is
+    /// made in a `nonisolated` static on `SessionMonitor`.
+    nonisolated static var isAutoApproveAllClaudePermissionsEnabled: Bool {
+        UserDefaults.standard.bool(forKey: autoApproveAllClaudePermissionsKey)
     }
 }

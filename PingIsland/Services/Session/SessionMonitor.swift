@@ -95,9 +95,9 @@ class SessionMonitor: ObservableObject {
 
         let handleHookEvent: @Sendable (HookEvent) -> Void = { event in
             Task {
-                let shouldAutoApprovePermission = await Self.shouldAutoApproveClaudePermission(for: event)
+                let autoApprovalSource = await Self.autoApprovalSource(for: event)
 
-                if !shouldAutoApprovePermission {
+                if autoApprovalSource == nil {
                     await MainActor.run {
                         SoundManager.shared.handleEvent(event.event)
                     }
@@ -105,7 +105,7 @@ class SessionMonitor: ObservableObject {
 
                 await SessionStore.shared.process(.hookReceived(event))
 
-                if shouldAutoApprovePermission,
+                if let autoApprovalSource,
                    let approvedToolUseId = await Self.resolvePendingApprovalToolUseId(for: event.sessionId, fallback: event.toolUseId) {
                     if event.ingress == .remoteBridge {
                         await MainActor.run {
@@ -124,6 +124,11 @@ class SessionMonitor: ObservableObject {
                     }
                     await SessionStore.shared.process(
                         .permissionApproved(sessionId: event.sessionId, toolUseId: approvedToolUseId)
+                    )
+                    await AutoApprovalLog.shared.record(
+                        event: event,
+                        toolUseId: approvedToolUseId,
+                        source: autoApprovalSource
                     )
                     return
                 }
@@ -584,7 +589,8 @@ class SessionMonitor: ObservableObject {
         return (toolUseId, answers, updatedInput)
     }
 
-    private nonisolated static func shouldAutoApproveClaudePermission(for event: HookEvent) async -> Bool {
+    /// Why this event should be approved without the user, or nil when it must be shown.
+    private nonisolated static func autoApprovalSource(for event: HookEvent) async -> AutoApprovalSource? {
         guard event.provider == .claude,
               event.event == "PermissionRequest",
               event.status == "waiting_for_approval",
@@ -594,16 +600,25 @@ class SessionMonitor: ObservableObject {
               // surface like default mode does even while auto-approve is on for real tools.
               !event.targetsQuestionTool
         else {
-            return false
+            return nil
         }
+
+        let globalAutoApprove = AppSettings.isAutoApproveAllClaudePermissionsEnabled
 
         guard let session = await SessionStore.shared.session(for: event.sessionId) else {
-            return false
+            // First event Island has seen for this session, e.g. a session that was
+            // already running when the app relaunched. Only the global setting can
+            // apply, since no per-session "Always Allow" can exist yet.
+            return globalAutoApprove && event.clientInfo.kind == .claudeCode ? .global : nil
         }
 
-        return session.autoApprovePermissions
-            && session.provider == .claude
-            && session.clientInfo.kind == .claudeCode
+        guard session.provider == .claude, session.clientInfo.kind == .claudeCode else {
+            return nil
+        }
+        if session.autoApprovePermissions {
+            return .session
+        }
+        return session.autoApprovesPermissions(globalAutoApprove: globalAutoApprove) ? .global : nil
     }
 
     private nonisolated static func resolvePendingApprovalToolUseId(

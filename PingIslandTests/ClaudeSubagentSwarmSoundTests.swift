@@ -21,7 +21,7 @@ final class ClaudeSubagentSwarmSoundTests: XCTestCase {
     /// Control: when a `.waitingForApproval` snapshot is actually delivered, the
     /// evaluator emits the attention sound exactly once.
     func testAttentionSoundFiresWhenWaitingSnapshotDelivered() {
-        var evaluator = SessionSoundTransitionEvaluator()
+        var evaluator = SessionSoundTransitionEvaluator(globalAutoApprove: { false })
 
         XCTAssertNil(evaluator.evaluate([session("s1", .processing)]),
                      "First snapshot only primes the baseline")
@@ -38,7 +38,7 @@ final class ClaudeSubagentSwarmSoundTests: XCTestCase {
     /// subagent's tool event was the latest mutation in that run-loop tick).
     /// Result: the attention sound never fires — the prompt is silently missed.
     func testAttentionSoundLostWhenCoalescingDropsWaitingSnapshot() {
-        var evaluator = SessionSoundTransitionEvaluator()
+        var evaluator = SessionSoundTransitionEvaluator(globalAutoApprove: { false })
         // Coalesced delivery: the waiting windows existed in SessionStore but were
         // never the last value in a tick, so onChange only ever saw processing.
         let coalescedSnapshots: [[SessionState]] = [
@@ -64,7 +64,7 @@ final class ClaudeSubagentSwarmSoundTests: XCTestCase {
     /// first onChange), priming records it in the baseline and the attention sound
     /// never fires for that episode.
     func testAlreadyPendingApprovalAtPrimingNeverFires() {
-        var evaluator = SessionSoundTransitionEvaluator()
+        var evaluator = SessionSoundTransitionEvaluator(globalAutoApprove: { false })
 
         XCTAssertNil(evaluator.evaluate([session("swarm", waitingForApproval())]),
                      "Priming snapshot emits no sound")
@@ -79,7 +79,7 @@ final class ClaudeSubagentSwarmSoundTests: XCTestCase {
     /// sequence DOES re-fire attention each time the waiting snapshot is delivered,
     /// confirming the evaluator itself is not the defect — only snapshot delivery is.
     func testDeliveredOscillationReFiresAttention() {
-        var evaluator = SessionSoundTransitionEvaluator()
+        var evaluator = SessionSoundTransitionEvaluator(globalAutoApprove: { false })
         _ = evaluator.evaluate([session("swarm", .processing)])  // prime
 
         XCTAssertEqual(evaluator.evaluate([session("swarm", waitingForApproval())])?.event, .attentionRequired)

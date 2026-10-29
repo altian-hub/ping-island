@@ -9,20 +9,20 @@ final class MiniModeTests: XCTestCase {
     // MARK: - Prompt selection
 
     func testApprovalSessionIsAPrompt() {
-        XCTAssertTrue(MiniPromptPresenter.isPrompting(session("a", phase: waitingForApproval())))
+        XCTAssertTrue(MiniPromptPresenter.isPrompting(session("a", phase: waitingForApproval()), globalAutoApprove: false))
     }
 
     func testProcessingAndCompletedSessionsAreNotPrompts() {
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("a", phase: .processing)))
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("b", phase: .waitingForInput)))
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("c", phase: .idle)))
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("d", phase: .ended)))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("a", phase: .processing), globalAutoApprove: false))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("b", phase: .waitingForInput), globalAutoApprove: false))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("c", phase: .idle), globalAutoApprove: false))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(session("d", phase: .ended), globalAutoApprove: false))
     }
 
     func testAutoApproveSessionDoesNotPrompt() {
         var state = session("auto", phase: waitingForApproval())
         state.autoApprovePermissions = true
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(state))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(state, globalAutoApprove: false))
     }
 
     func testQuestionPromptsEvenWhenAutoApproveIsOn() {
@@ -30,20 +30,48 @@ final class MiniModeTests: XCTestCase {
         // session forever if mini mode stayed dark for it.
         var state = session("q", phase: .waitingForInput, intervention: question())
         state.autoApprovePermissions = true
-        XCTAssertTrue(MiniPromptPresenter.isPrompting(state))
+        XCTAssertTrue(MiniPromptPresenter.isPrompting(state, globalAutoApprove: false))
+    }
+
+    func testGlobalAutoApproveCoversClaudeCodeSessions() {
+        var state = session("cc", phase: waitingForApproval())
+        state.clientInfo = SessionClientInfo(
+            kind: .claudeCode,
+            profileID: "claude_code",
+            name: "Claude Code",
+            bundleIdentifier: "com.anthropic.claudecode"
+        )
+        XCTAssertFalse(state.autoApprovesPermissions(globalAutoApprove: false))
+        XCTAssertTrue(state.autoApprovesPermissions(globalAutoApprove: true))
+    }
+
+    func testGlobalAutoApproveHidesClaudeCodeApprovalButNotQuestion() {
+        // The default test session is Claude Code (SessionClientInfo.default(for: .claude)).
+        let approval = session("cc", phase: waitingForApproval())
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(approval, globalAutoApprove: true))
+
+        let asking = session("q", phase: .waitingForInput, intervention: question())
+        XCTAssertTrue(MiniPromptPresenter.isPrompting(asking, globalAutoApprove: true))
+    }
+
+    func testGlobalAutoApproveSkipsNonClaudeCodeSessions() {
+        // Only Claude Code's hook path can answer automatically; a Codex card hidden
+        // by the global flag would leave that agent blocked with nothing on screen.
+        let state = SessionState(sessionId: "codex", cwd: "/repo", provider: .codex, phase: waitingForApproval())
+        XCTAssertFalse(state.autoApprovesPermissions(globalAutoApprove: true))
     }
 
     func testAnsweredQuestionAwaitingClientIsNoLongerAPrompt() {
         let answered = question(metadata: ["continuationState": "awaiting_client_followup"])
         let state = session("q", phase: .waitingForInput, intervention: answered)
-        XCTAssertFalse(MiniPromptPresenter.isPrompting(state))
+        XCTAssertFalse(MiniPromptPresenter.isPrompting(state, globalAutoApprove: false))
     }
 
     func testPromptSessionsAreOrderedLongestWaitingFirst() {
         let older = session("older", phase: waitingForApproval(at: Date(timeIntervalSince1970: 100)))
         let newer = session("newer", phase: waitingForApproval(at: Date(timeIntervalSince1970: 500)))
 
-        let ordered = MiniPromptPresenter.promptSessions(from: [newer, older])
+        let ordered = MiniPromptPresenter.promptSessions(from: [newer, older], globalAutoApprove: false)
         XCTAssertEqual(ordered.map(\.stableId), [older.stableId, newer.stableId])
     }
 
@@ -53,7 +81,8 @@ final class MiniModeTests: XCTestCase {
 
         let active = MiniPromptPresenter.activePrompt(
             from: [older, newer],
-            preferring: older.stableId
+            preferring: older.stableId,
+            globalAutoApprove: false
         )
         XCTAssertEqual(active?.stableId, older.stableId)
     }
@@ -64,7 +93,8 @@ final class MiniModeTests: XCTestCase {
 
         let active = MiniPromptPresenter.activePrompt(
             from: [resolved, newer],
-            preferring: resolved.stableId
+            preferring: resolved.stableId,
+            globalAutoApprove: false
         )
         XCTAssertEqual(active?.stableId, newer.stableId)
     }
@@ -73,7 +103,8 @@ final class MiniModeTests: XCTestCase {
         XCTAssertNil(
             MiniPromptPresenter.activePrompt(
                 from: [session("a", phase: .processing), session("b", phase: .idle)],
-                preferring: nil
+                preferring: nil,
+                globalAutoApprove: false
             )
         )
     }
@@ -87,7 +118,8 @@ final class MiniModeTests: XCTestCase {
 
         let (prompts, _) = MiniPromptPresenter.visiblePrompts(
             from: [older, newest, newer],
-            dismissing: [:]
+            dismissing: [:],
+            globalAutoApprove: false
         )
         XCTAssertEqual(prompts.map(\.stableId), [older.stableId, newer.stableId, newest.stableId])
     }
@@ -99,7 +131,8 @@ final class MiniModeTests: XCTestCase {
         // User answers the displayed (longest-waiting) prompt; store hasn't caught up.
         let (prompts, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: [first, second],
-            dismissing: [MiniPromptPresenter.promptIdentity(first): Date()]
+            dismissing: [MiniPromptPresenter.promptIdentity(first): Date()],
+            globalAutoApprove: false
         )
         XCTAssertEqual(prompts.map(\.stableId), [second.stableId])
         XCTAssertEqual(
@@ -119,7 +152,8 @@ final class MiniModeTests: XCTestCase {
             dismissing: [
                 MiniPromptPresenter.promptIdentity(first): Date(),
                 MiniPromptPresenter.promptIdentity(second): Date()
-            ]
+            ],
+            globalAutoApprove: false
         )
         XCTAssertTrue(prompts.isEmpty, "both answered prompts must stay hidden")
     }
@@ -129,7 +163,8 @@ final class MiniModeTests: XCTestCase {
 
         let (prompts, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: [resolved],
-            dismissing: [MiniPromptPresenter.promptIdentity(resolved): Date()]
+            dismissing: [MiniPromptPresenter.promptIdentity(resolved): Date()],
+            globalAutoApprove: false
         )
         XCTAssertTrue(prompts.isEmpty)
         XCTAssertTrue(stillDismissed.isEmpty, "stale ids must not accumulate")
@@ -148,7 +183,7 @@ final class MiniModeTests: XCTestCase {
         )))
 
         let dismissed = [MiniPromptPresenter.promptIdentity(p1): Date()]
-        let (prompts, _) = MiniPromptPresenter.visiblePrompts(from: [p2], dismissing: dismissed)
+        let (prompts, _) = MiniPromptPresenter.visiblePrompts(from: [p2], dismissing: dismissed, globalAutoApprove: false)
 
         XCTAssertEqual(
             prompts.map(\.stableId),
@@ -181,14 +216,16 @@ final class MiniModeTests: XCTestCase {
         let (stillHidden, _) = MiniPromptPresenter.visiblePrompts(
             from: [state],
             dismissing: [identity: answeredAt],
-            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL - 1)
+            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL - 1),
+            globalAutoApprove: false
         )
         XCTAssertTrue(stillHidden.isEmpty, "should stay hidden inside the TTL")
 
         let (resurfaced, stillDismissed) = MiniPromptPresenter.visiblePrompts(
             from: [state],
             dismissing: [identity: answeredAt],
-            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL + 1)
+            now: answeredAt.addingTimeInterval(MiniPromptPresenter.dismissalTTL + 1),
+            globalAutoApprove: false
         )
         XCTAssertEqual(resurfaced.map(\.stableId), [state.stableId])
         XCTAssertTrue(stillDismissed.isEmpty, "expired entries must be pruned")
@@ -205,7 +242,8 @@ final class MiniModeTests: XCTestCase {
                 MiniPromptPresenter.promptIdentity(a): now.addingTimeInterval(-(MiniPromptPresenter.dismissalTTL + 1)),
                 MiniPromptPresenter.promptIdentity(b): now
             ],
-            now: now
+            now: now,
+            globalAutoApprove: false
         )
         XCTAssertEqual(prompts.map(\.stableId), [a.stableId])
     }

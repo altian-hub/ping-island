@@ -31,6 +31,10 @@
 "消息完成后自动弹出结果面板；关闭后只保留刘海状态提示和提示音" = "Automatically open the result panel when a reply is finished. When off, keep only the notch status cue and sound.";
 "鼠标离开时自动收起" = "Auto-collapse on mouse leave";
 "hover 展开的预览面板会在鼠标离开后自动关闭" = "Automatically close the hover preview panel when the mouse leaves";
+"自动允许所有 Claude Code 权限" = "Auto-allow all Claude Code permissions";
+"所有 Claude Code 会话的权限请求都会自动允许，不再弹出确认；提问仍会显示" = "Every permission request from every Claude Code session is allowed without asking. Questions still show.";
+"查看自动允许记录" = "Show auto-allow log";
+"在 Finder 中显示 auto-approvals.jsonl，每条自动允许的权限请求都会记录在这里" = "Reveal auto-approvals.jsonl in Finder. Every auto-allowed permission request is recorded there.";
 "应用" = "App";
 "退出应用" = "Quit app";
 "立即关闭 Island" = "Quit Island immediately";

@@ -823,6 +823,34 @@ private struct SettingsPanelContentView: View {
                     subtitle: "hover 展开的预览面板会在鼠标离开后自动关闭",
                     isOn: $settings.autoCollapseOnLeave
                 )
+                SettingsLineDivider()
+
+                SettingsToggleLine(
+                    title: "自动允许所有 Claude Code 权限",
+                    subtitle: "所有 Claude Code 会话的权限请求都会自动允许，不再弹出确认；提问仍会显示",
+                    isOn: $settings.autoApproveAllClaudePermissions
+                )
+                SettingsLineDivider()
+
+                SettingsActionLine(
+                    title: "查看自动允许记录",
+                    subtitle: "在 Finder 中显示 auto-approvals.jsonl，每条自动允许的权限请求都会记录在这里"
+                ) {
+                    let url = AutoApprovalLog.fileURL
+                    if FileManager.default.fileExists(atPath: url.path) {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } else {
+                        try? FileManager.default.createDirectory(
+                            at: url.deletingLastPathComponent(),
+                            withIntermediateDirectories: true
+                        )
+                        NSWorkspace.shared.open(url.deletingLastPathComponent())
+                    }
+                } accessory: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.72))
+                }
             }
 
             SettingsSectionCard(title: "应用") {

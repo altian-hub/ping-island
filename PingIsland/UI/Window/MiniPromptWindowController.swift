@@ -224,6 +224,14 @@ final class MiniPromptWindowController: NSWindowController {
     }
 
     private func positionPanel(_ panel: NSPanel, height: CGFloat) {
+        let size = CGSize(width: MiniPromptMetrics.width, height: height)
+        if let anchored = statusItemAnchoredFrame(size: size) {
+            panel.setFrame(anchored, display: true)
+            return
+        }
+
+        // Fallback when the status item has no on-screen button, e.g. the menu
+        // bar is full and macOS hid it behind the notch.
         ScreenSelector.shared.refreshScreens()
         let screen = ScreenSelector.shared.selectedScreen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
@@ -235,6 +243,24 @@ final class MiniPromptWindowController: NSWindowController {
             NSRect(origin: origin, size: CGSize(width: MiniPromptMetrics.width, height: height)),
             display: true
         )
+    }
+
+    /// Frame that drops the panel just below the menu-bar icon, centered on it
+    /// and clamped to that screen's visible frame.
+    private func statusItemAnchoredFrame(size: CGSize) -> NSRect? {
+        guard let button = statusItem?.button,
+              let buttonWindow = button.window,
+              let screen = buttonWindow.screen else { return nil }
+        let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        guard screen.frame.intersects(anchor) else { return nil }
+
+        let visible = screen.visibleFrame
+        let gap = MiniPromptMetrics.statusItemGap
+        let minX = visible.minX + gap
+        let maxX = visible.maxX - size.width - gap
+        let x = min(max(anchor.midX - size.width / 2, minX), maxX)
+        let y = min(anchor.minY, visible.maxY) - size.height - gap
+        return NSRect(origin: CGPoint(x: x, y: y), size: size)
     }
 
     // MARK: - Status Item

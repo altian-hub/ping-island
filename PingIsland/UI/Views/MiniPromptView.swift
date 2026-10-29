@@ -172,6 +172,9 @@ enum MiniPromptMetrics {
     static let width: CGFloat = 380
     /// Gap between the panel and the top edge of the screen's visible frame.
     static let topInset: CGFloat = 12
+    /// Gap between the panel and the menu-bar icon it drops down from, and
+    /// between the panel and the screen edge when the icon sits near it.
+    static let statusItemGap: CGFloat = 6
 }
 
 private struct MiniPromptButtonStyle: ButtonStyle {

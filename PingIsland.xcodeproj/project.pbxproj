@@ -578,7 +578,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.7;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wudanwu.PingIsland;
 				PRODUCT_NAME = "Ping Island";
 				REGISTER_APP_GROUPS = YES;
@@ -614,7 +614,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.7;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wudanwu.PingIsland;
 				PRODUCT_NAME = "Ping Island";
 				REGISTER_APP_GROUPS = YES;

@@ -106,7 +106,7 @@ class SessionMonitor: ObservableObject {
                 await SessionStore.shared.process(.hookReceived(event))
 
                 if let autoApprovalSource,
-                   let approvedToolUseId = await Self.resolvePendingApprovalToolUseId(for: event.sessionId, fallback: event.toolUseId) {
+                   let approvedToolUseId = await Self.resolvePendingApprovalToolUseId(for: event.sessionId, preferred: event.toolUseId) {
                     if event.ingress == .remoteBridge {
                         await MainActor.run {
                             RemoteConnectorManager.shared.respondToPermission(
@@ -621,17 +621,26 @@ class SessionMonitor: ObservableObject {
         return session.autoApprovesPermissions(globalAutoApprove: globalAutoApprove) ? .global : nil
     }
 
+    /// The tool_use_id to answer for an auto-approved PermissionRequest.
+    ///
+    /// Prefer the event's own id: HookSocketServer keys the held bridge socket by it.
+    /// The session's `activePermission` is only a fallback. One session can hold
+    /// several permission requests at once (parallel tool calls, or workflow
+    /// subagents that share the parent's sessionId), and `activePermission` names
+    /// just one of them. Answering that id instead leaves this request's socket
+    /// unanswered, so Claude Code shows its native prompt even with auto-approve on.
     private nonisolated static func resolvePendingApprovalToolUseId(
         for sessionId: String,
-        fallback: String?
+        preferred: String?
     ) async -> String? {
+        if let preferred, !preferred.isEmpty {
+            return preferred
+        }
         if let toolUseId = await SessionStore.shared.session(for: sessionId)?.activePermission?.toolUseId,
            !toolUseId.isEmpty {
             return toolUseId
         }
-
-        guard let fallback, !fallback.isEmpty else { return nil }
-        return fallback
+        return nil
     }
 
     private func loadCodexRolloutFallback(

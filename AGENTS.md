@@ -38,6 +38,7 @@ This file is a routing layer for coding agents working in this repo. Keep it sho
 - Client mascot system: `PingIsland/UI/Components/MascotView.swift`, `PingIsland/UI/Views/MascotSettingsView.swift`
 - App updates and release notes: `PingIsland/Services/Update/`, `PingIsland/UI/Views/ReleaseNotesWindowView.swift`, `PingIsland/UI/Window/ReleaseNotesWindowController.swift`
 - Sparkle build configuration: `Config/App.xcconfig`, `Config/LocalSecrets.xcconfig`, `docs/sparkle-release.md`
+- Debug history (root causes, evidence, lessons; newest first): `docs/devlog.md`
 
 ## Repo Map
 
